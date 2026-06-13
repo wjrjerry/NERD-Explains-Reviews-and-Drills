@@ -15,6 +15,12 @@ class Settings(BaseSettings):
 
     upload_dir: str = "./uploads"
     max_upload_size_mb: int = 50
+    cors_origins: str = (
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "http://localhost:4173,"
+        "http://127.0.0.1:4173"
+    )
 
     ai_provider: str = "mock"
     ai_api_key: str | None = None

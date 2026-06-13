@@ -15,6 +15,8 @@
 
 ## 1. 启动
 
+后端服务：
+
 ```bash
 docker compose up --build -d
 docker compose exec api alembic upgrade head
@@ -50,6 +52,20 @@ docker compose down
 
 ```bash
 docker compose down -v
+```
+
+前端工程位于 `frontend/`：
+
+```bash
+cd frontend
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+前端默认通过 Vite 代理把 `/api/*` 转发到 `http://localhost:8000/*`，因此本地联调时先启动后端，再打开：
+
+```text
+http://127.0.0.1:5173
 ```
 
 ## 2. AI 配置

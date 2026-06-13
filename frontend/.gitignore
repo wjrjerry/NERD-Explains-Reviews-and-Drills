@@ -1,0 +1,39 @@
+
+
+# dependencies
+node_modules/
+dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+
+# build outputs
+dist/
+build/
+coverage/
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite generated files
+vite.config.js
+vite.config.d.ts
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# env files
+.env
+.env.*
+!.env.example
+
+# editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
