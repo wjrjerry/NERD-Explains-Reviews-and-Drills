@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, UserRole
@@ -38,6 +38,42 @@ class UserRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_users(
+        db: AsyncSession,
+        *,
+        page: int,
+        page_size: int,
+        role: UserRole | None = None,
+        is_active: bool | None = None,
+    ) -> tuple[list[User], int]:
+        """分页查询未删除用户。
+
+        管理员后台使用该方法查看系统用户，可按角色和启用状态筛选。
+        """
+        conditions = [User.is_deleted.is_(False)]
+
+        if role is not None:
+            conditions.append(User.role == role)
+
+        if is_active is not None:
+            conditions.append(User.is_active.is_(is_active))
+
+        total_result = await db.execute(
+            select(func.count()).select_from(User).where(*conditions)
+        )
+        total = total_result.scalar_one()
+
+        result = await db.execute(
+            select(User)
+            .where(*conditions)
+            .order_by(User.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        return list(result.scalars().all()), total
 
     @staticmethod
     async def create_user(

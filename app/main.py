@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.routers import (
+    admin,
     auth,
     health,
     knowledge,
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(admin.router)
 app.include_router(knowledge.router)
 app.include_router(qa.router)
 app.include_router(questions.router)

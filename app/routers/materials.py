@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -15,14 +15,17 @@ router = APIRouter(prefix="/materials", tags=["materials"])
 
 @router.post("", response_model=ApiResponse[MaterialDetailResponse])
 async def upload_material(
+    background_tasks: BackgroundTasks,
     target_id: int = Form(..., description="所属课程/考试目标 ID"),
+    auto_parse: bool = Form(default=True, description="上传成功后是否自动解析"),
     file: UploadFile = File(..., description="上传资料文件"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """资料上传接口。
 
-    支持 PDF、TXT 和图片资料，并校验文件大小。
+    支持 PDF、TXT 和图片资料，并校验文件大小。默认上传成功后进入后台解析，
+    立即返回 parsing 状态，前端可通过详情或列表接口轮询最新状态。
     """
     try:
         material = await MaterialService.upload(
@@ -31,6 +34,9 @@ async def upload_material(
             target_id=target_id,
             file=file,
         )
+        if auto_parse:
+            material, task = await ParserService.enqueue_material_parse(db, material=material)
+            background_tasks.add_task(ParserService.parse_material_by_task_id, task.id)
     except ValueError as exc:
         return fail(code=40003, message=str(exc))
 
@@ -124,22 +130,27 @@ async def preview_material(
         )
     )
 
+
 @router.post("/{material_id}/parse", response_model=ApiResponse[MaterialDetailResponse])
 async def parse_material(
+    background_tasks: BackgroundTasks,
     material_id: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """资料解析接口。
 
-    当前执行 TXT 真实文本提取；PDF 和图片 OCR 待后续真实解析服务接入。
+    创建后台解析任务，立即返回 parsing 状态。TXT、PDF 和图片 OCR 的具体
+    解析结果可通过资料详情或列表接口轮询查看。
     """
     try:
-        material = await ParserService.parse(
+        material = await MaterialService.get_detail(
             db,
             current_user=current_user,
             material_id=material_id,
         )
+        material, task = await ParserService.enqueue_material_parse(db, material=material)
+        background_tasks.add_task(ParserService.parse_material_by_task_id, task.id)
     except ValueError as exc:
         return fail(code=40402, message=str(exc))
 
@@ -148,6 +159,7 @@ async def parse_material(
             material=MaterialResponse.model_validate(material),
         )
     )
+
 
 @router.delete("/{material_id}", response_model=ApiResponse[MaterialDetailResponse])
 async def delete_material(

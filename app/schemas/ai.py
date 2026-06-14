@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class AiTaskStatus(StrEnum):
+class AiTaskStatus(str, Enum):
     pending = "pending"
     running = "running"
     succeeded = "succeeded"

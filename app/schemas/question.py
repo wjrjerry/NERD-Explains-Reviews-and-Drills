@@ -1,16 +1,16 @@
-from enum import StrEnum
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
-class QuestionType(StrEnum):
+class QuestionType(str, Enum):
     single_choice = "single_choice"
     multiple_choice = "multiple_choice"
     true_false = "true_false"
     subjective = "subjective"
 
 
-class QuestionDifficulty(StrEnum):
+class QuestionDifficulty(str, Enum):
     easy = "easy"
     medium = "medium"
     hard = "hard"

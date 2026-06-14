@@ -1,9 +1,9 @@
-from enum import StrEnum
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
-class MasteryStatus(StrEnum):
+class MasteryStatus(str, Enum):
     unmastered = "unmastered"
     reviewing = "reviewing"
     mastered = "mastered"

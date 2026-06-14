@@ -5,7 +5,7 @@
 ```text
 注册/登录
 -> 创建课程/考试目标
--> 上传 TXT 资料
+-> 上传 TXT/PDF/图片资料
 -> 解析为 materials.parsed_text
 -> 知识提炼 / AI 问答 / AI 出题
 -> 自测提交与评分
@@ -15,11 +15,9 @@
 
 ## 1. 启动
 
-后端服务：
-
 ```bash
 docker compose up --build -d
-docker compose exec api alembic upgrade head
+docker compose exec api alembic upgrade heads
 ```
 
 接口地址：
@@ -42,7 +40,238 @@ curl http://localhost:8000/health/db
 curl http://localhost:8000/health/redis
 ```
 
-停止服务：
+首次启动或数据库重置后，需要执行数据库迁移。当前项目存在多个 Alembic head，建议使用 `heads`：
+
+```bash
+docker compose exec api alembic upgrade heads
+```
+
+## 当前接口测试流程
+
+### 1. 注册学生账号
+
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "student1", "password": "123456", "display_name": "学生1"}'
+```
+
+### 2. 登录获取 Token
+
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "student1", "password": "123456"}'
+```
+
+复制响应中的 `data.token.access_token`，后续请求通过 Bearer Token 鉴权：
+
+```bash
+TOKEN='粘贴 access_token'
+```
+
+### 3. 创建课程/考试目标
+
+```bash
+curl -X POST http://localhost:8000/study-targets \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "title": "数据库系统期末复习",
+    "subject": "数据库系统",
+    "target_type": "exam",
+    "exam_date": "2026-07-01",
+    "review_goal": "掌握重点章节并完成错题复盘"
+  }'
+```
+
+复制响应中的 `data.target.id`：
+
+```bash
+TARGET_ID='粘贴 target id'
+```
+
+### 4. 上传资料并进入后台解析
+
+资料上传接口支持 TXT、PDF 和图片。默认 `auto_parse=true`，上传成功后会创建解析任务并立即返回 `parse_status=parsing`，后台任务完成后资料状态会更新为 `parsed` 或 `failed`。
+
+```bash
+curl -X POST http://localhost:8000/materials \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "target_id=$TARGET_ID" \
+  -F "file=@docs/temp/test_materials/test.txt"
+```
+
+如果只想上传但暂不解析，可以传：
+
+```bash
+-F "auto_parse=false"
+```
+
+### 5. 查看资料解析状态
+
+```bash
+curl "http://localhost:8000/materials?target_id=$TARGET_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+也可以查看单个资料详情：
+
+```bash
+curl http://localhost:8000/materials/1 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 6. 手动重新解析资料
+
+如果资料解析失败，或上传时设置了 `auto_parse=false`，可以手动创建后台解析任务：
+
+```bash
+curl -X POST http://localhost:8000/materials/1/parse \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+该接口会立即返回 `parse_status=parsing`，实际解析在后台执行。
+
+### 7. 预览资料
+
+TXT 资料可以直接预览原始文本；PDF 和图片资料当前主要通过解析后的 `parsed_text` 供 AI 模块使用，预览接口会返回当前阶段的提示信息。
+
+```bash
+curl http://localhost:8000/materials/1/preview \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## 文件解析策略
+
+当前资料解析策略如下：
+
+| 文件类型 | 处理方式 |
+|---|---|
+| TXT | 直接读取 UTF-8 文本内容 |
+| 文本型 PDF | 优先使用 `pypdf` 提取页面文本 |
+| 扫描版 PDF | 当 `pypdf` 未提取到文本时，使用 `pdf2image` 转图片，再通过 Tesseract OCR 识别 |
+| 图片 | 使用 Tesseract OCR 识别文字 |
+
+OCR 支持简体中文和英文混合识别，容器内安装了：
+
+```text
+tesseract-ocr
+tesseract-ocr-eng
+tesseract-ocr-chi-sim
+poppler-utils
+```
+
+可以检查容器中的 OCR 语言包：
+
+```bash
+docker compose exec api tesseract --list-langs
+```
+
+应至少包含：
+
+```text
+chi_sim
+eng
+osd
+```
+
+## 管理员接口测试
+
+注册接口默认创建学生账号。测试管理员接口时，可以先注册账号，再手动将角色改为 `admin`：
+
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin1", "password": "123456", "display_name": "管理员1"}'
+
+docker compose exec postgres psql -U ai_study -d ai_study_db \
+  -c "UPDATE users SET role = 'admin' WHERE username = 'admin1';"
+```
+
+登录管理员：
+
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin1", "password": "123456"}'
+```
+
+复制管理员 token：
+
+```bash
+ADMIN_TOKEN='粘贴管理员 access_token'
+```
+
+### 查看用户列表
+
+```bash
+curl http://localhost:8000/admin/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+### 查看资料列表
+
+```bash
+curl http://localhost:8000/admin/materials \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+### 查看解析任务
+
+```bash
+curl http://localhost:8000/admin/tasks \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+按任务状态筛选：
+
+```bash
+curl "http://localhost:8000/admin/tasks?status=failed" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+任务状态包括：
+
+```text
+pending
+running
+succeeded
+failed
+```
+
+### 重试解析任务
+
+```bash
+curl -X POST http://localhost:8000/admin/tasks/1/retry \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+这里的 `1` 是 `parse_tasks.id`，不是 `materials.id`。
+
+### 查看管理员操作日志
+
+```bash
+curl http://localhost:8000/admin/logs \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+管理员重试解析任务时，会写入 `admin_logs`。
+
+## AI 问答测试
+
+资料解析完成后，可以基于真实 `materials.parsed_text` 调用 AI 问答：
+
+```bash
+curl -X POST http://localhost:8000/qa/ask \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"material_id": 1, "question": "这份资料的主要内容是什么？"}'
+```
+
+如果资料仍处于 `uploaded`、`parsing` 或 `failed`，AI 接口会拒绝处理。
+
+## 停止
 
 ```bash
 docker compose down
@@ -54,23 +283,11 @@ docker compose down
 docker compose down -v
 ```
 
-前端工程位于 `frontend/`：
-
-```bash
-cd frontend
-npm install
-npm run dev -- --host 127.0.0.1 --port 5173
-```
-
-前端默认通过 Vite 代理把 `/api/*` 转发到 `http://localhost:8000/*`，因此本地联调时先启动后端，再打开：
-
-```text
-http://127.0.0.1:5173
-```
-
 ## 2. AI 配置
 
-`.env.example` 提供默认配置。真实 AI 调用请在本地 `.env` 中配置，不要提交真实 API Key。
+`.env.example` 提供了默认配置。Docker Compose 启动时会覆盖容器内的数据库和 Redis 地址，让 API 通过服务名 `postgres`、`redis` 连接。
+
+真实 AI 调用请在本地 `.env` 中配置，且不要提交真实 API Key：
 
 ```text
 AI_PROVIDER=openai-compatible
@@ -175,22 +392,22 @@ MATERIAL_ID=$(curl -s -X POST http://localhost:8000/materials \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['material']['id'])")
 ```
 
-上传后资料状态是：
+上传后默认会创建后台解析任务，接口立即返回：
 
 ```text
-parse_status=uploaded
+parse_status=parsing
 ```
 
-此时调用 AI 接口会返回 HTTP 409：
+如果后台解析尚未完成，此时调用 AI 接口会返回 HTTP 409：
 
 ```json
 {"detail":"Material is not parsed yet."}
 ```
 
-### 3.5 解析 TXT 资料
+### 3.5 查看解析结果
 
 ```bash
-curl -X POST http://localhost:8000/materials/$MATERIAL_ID/parse \
+curl "http://localhost:8000/materials/$MATERIAL_ID" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -201,12 +418,14 @@ parse_status=parsed
 parse_error=null
 ```
 
-当前真实支持 TXT 解析。PDF/图片上传可以成功，但解析会变为 `failed`：
+如果上传时传了 `auto_parse=false`，或者需要重新解析，可以手动创建后台解析任务：
 
-```text
-parse_error=当前仅支持 TXT 资料解析，PDF 解析尚未接入
-parse_error=当前仅支持 TXT 资料解析，图片 OCR 尚未接入
+```bash
+curl -X POST http://localhost:8000/materials/$MATERIAL_ID/parse \
+  -H "Authorization: Bearer $TOKEN"
 ```
+
+当前真实支持 TXT、文本型 PDF、扫描版 PDF 和图片 OCR。解析失败时会写入 `parse_error`，前端可以直接展示失败原因。
 
 ### 3.6 预览资料
 
@@ -402,9 +621,11 @@ curl "http://localhost:8000/review-plans?target_id=$TARGET_ID&page=1&page_size=1
 用户注册/登录：通过
 学习目标创建：通过
 TXT 上传：通过
+异步解析任务：通过，parse_status 从 parsing 更新为 parsed 或 failed
 未解析资料调用 QA：HTTP 409，符合预期
 TXT parse：通过，parse_status=parsed
-PDF parse：返回 parse_status=failed，符合当前能力边界
+文本型 PDF parse：通过，parse_status=parsed
+图片 OCR：通过，识别失败时返回明确 parse_error
 知识提炼：通过
 QA：通过，真实模型调用，记录保存
 QA history：通过
@@ -420,7 +641,9 @@ AI 复习计划生成：通过
 ## 5. 当前能力边界
 
 - TXT 资料解析已真实实现。
-- PDF 解析和图片 OCR 尚未接入真实服务，不会写入 mock 文本。
+- 文本型 PDF 通过 `pypdf` 提取文本。
+- 扫描版 PDF 通过 `pdf2image` 转图片后使用 Tesseract OCR 识别。
+- 图片资料通过 Tesseract OCR 识别，支持简体中文和英文。
 - 知识提炼目前是规则结构化生成，适合前端展示和闭环联调。
 - QA、出题、主观题评分、客观题错因分析、复习计划生成已接入 OpenAI-compatible 模型。
 - 复习任务有 `completed` 字段，但暂未实现任务完成状态更新接口。

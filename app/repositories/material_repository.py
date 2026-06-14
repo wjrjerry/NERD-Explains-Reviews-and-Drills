@@ -40,6 +40,21 @@ class MaterialRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_id_for_admin(
+        db: AsyncSession,
+        *,
+        material_id: int,
+    ) -> Material | None:
+        """管理员按资料 ID 查询未删除资料。"""
+        result = await db.execute(
+            select(Material).where(
+                Material.id == material_id,
+                Material.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def list_by_user(
         db: AsyncSession,
         *,
@@ -59,6 +74,46 @@ class MaterialRepository:
 
         if target_id is not None:
             conditions.append(Material.target_id == target_id)
+
+        total_result = await db.execute(
+            select(func.count()).select_from(Material).where(*conditions)
+        )
+        total = total_result.scalar_one()
+
+        result = await db.execute(
+            select(Material)
+            .where(*conditions)
+            .order_by(Material.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        return list(result.scalars().all()), total
+
+    @staticmethod
+    async def list_all(
+        db: AsyncSession,
+        *,
+        page: int,
+        page_size: int,
+        user_id: int | None = None,
+        target_id: int | None = None,
+        parse_status: MaterialParseStatus | None = None,
+    ) -> tuple[list[Material], int]:
+        """管理员分页查询资料列表。
+
+        支持按用户、课程/考试目标和解析状态筛选。
+        """
+        conditions = [Material.is_deleted.is_(False)]
+
+        if user_id is not None:
+            conditions.append(Material.user_id == user_id)
+
+        if target_id is not None:
+            conditions.append(Material.target_id == target_id)
+
+        if parse_status is not None:
+            conditions.append(Material.parse_status == parse_status)
 
         total_result = await db.execute(
             select(func.count()).select_from(Material).where(*conditions)
