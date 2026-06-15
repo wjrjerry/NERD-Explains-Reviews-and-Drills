@@ -914,22 +914,65 @@ blockquote {
 
 .practice-toolbar {
   display: grid;
-  grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.25fr) minmax(250px, 1fr) minmax(230px, auto);
-  align-items: center;
-  gap: 12px;
+  gap: 18px;
 }
 
 .practice-toolbar .panel-title {
   margin: 0;
 }
 
+.practice-form-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, 0.35fr) minmax(150px, 0.45fr);
+  gap: 14px;
+  align-items: end;
+}
+
+.question-type-field,
+.extra-requirement-field {
+  grid-column: 1 / -1;
+}
+
+.extra-requirement-field textarea {
+  min-height: 92px;
+}
+
 .checkbox-list,
-.toolbar-fields,
 .toolbar-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  justify-content: flex-start;
+  padding-top: 2px;
+}
+
+.hint-box {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.hint-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.hint-list {
+  display: grid;
+  gap: 8px;
+}
+
+.hint-list p {
+  margin: 0;
+  color: #3f4a5d;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 
 .toolbar-fields {
@@ -1216,18 +1259,18 @@ blockquote {
 
 .stat-bar i.green,
 .mastery-dot.mastered,
-.graph-node.mastered {
+.mastery-dot.proficient {
   background: #34c759;
 }
 
 .stat-bar i.blue,
-.graph-node.reviewing {
+.mastery-dot.basic {
   background: #007aff;
 }
 
 .stat-bar i.red,
 .mastery-dot.unmastered,
-.graph-node.unmastered {
+.mastery-dot.weak {
   background: #ff3b30;
 }
 
@@ -1244,7 +1287,8 @@ blockquote {
   background: #98a2b3;
 }
 
-.mastery-dot.reviewing {
+.mastery-dot.reviewing,
+.mastery-dot.unlearned {
   background: #ffcc00;
 }
 
@@ -1299,22 +1343,84 @@ blockquote {
   margin-top: 14px;
 }
 
-.graph-layout {
-  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.6fr);
+.graph-layout,
+.qa-layout,
+.practice-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.context-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.context-fields {
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  align-items: end;
+}
+
+.context-fields select,
+.context-fields option {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qa-content-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.35fr);
+  gap: 16px;
+}
+
+.graph-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.qa-compose-panel {
+  align-content: start;
 }
 
 .graph-canvas {
-  display: flex;
-  align-items: center;
-  align-content: flex-start;
-  gap: 12px;
-  flex-wrap: wrap;
+  display: grid;
+  align-content: start;
+  gap: 18px;
   min-height: 360px;
   margin-top: 14px;
   padding: 16px;
   border: 1px solid rgba(35, 47, 72, 0.08);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.45);
+}
+
+.graph-level {
+  display: grid;
+  gap: 10px;
+}
+
+.graph-level-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #566173;
+  font-size: 13px;
+}
+
+.graph-level-heading strong {
+  color: #1f3658;
+  font-size: 15px;
+}
+
+.graph-level-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
 }
 
 .graph-node {
@@ -1327,10 +1433,26 @@ blockquote {
   background: #d0d5dd;
   box-shadow: 0 12px 24px rgba(44, 57, 82, 0.10);
   text-align: center;
+  transition: transform 160ms ease, box-shadow 160ms ease, outline-color 160ms ease;
 }
 
-.graph-node.reviewing {
-  background: #ffcc00;
+.graph-node.unmastered,
+.graph-node.unlearned {
+  background: #e5e7eb;
+}
+
+.graph-node.reviewing,
+.graph-node.basic {
+  background: #cfe3ff;
+}
+
+.graph-node.weak {
+  background: #ffd8d2;
+}
+
+.graph-node.mastered,
+.graph-node.proficient {
+  background: #d7f2df;
 }
 
 .graph-node.selected {
@@ -1345,9 +1467,36 @@ blockquote {
   overflow-wrap: anywhere;
 }
 
-.graph-node span {
+.graph-node span,
+.graph-node small {
   font-size: 12px;
   font-weight: 800;
+}
+
+.graph-node small {
+  color: #566173;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.knowledge-detail-panel,
+.knowledge-detail-panel .detail-stack {
+  min-width: 0;
+}
+
+.knowledge-detail-panel p,
+.knowledge-detail-panel li,
+.clean-list li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.knowledge-detail-scroll {
+  display: grid;
+  gap: 16px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .mini-metrics {
@@ -1461,11 +1610,12 @@ blockquote {
     grid-column: 1 / -1;
   }
 
-  .practice-toolbar {
-    grid-template-columns: 1fr 1fr;
+  .practice-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .practice-toolbar .panel-title,
+  .question-type-field,
+  .extra-requirement-field,
   .focused-points,
   .score-pill {
     grid-column: 1 / -1;
@@ -1497,6 +1647,10 @@ blockquote {
   .admin-grid,
   .two-column,
   .qa-layout,
+  .qa-content-grid,
+  .graph-content-grid,
+  .context-fields,
+  .practice-form-grid,
   .material-library-toolbar,
   .option-grid,
   .auth-screen {

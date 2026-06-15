@@ -43,6 +43,9 @@ class QuestionRepository:
                     str(answer) for answer in question["correct_answer"]
                 ],
                 analysis=str(question["analysis"]),
+                hints=[
+                    str(hint) for hint in question.get("hints", []) if str(hint).strip()
+                ],
                 knowledge_points=[
                     str(point) for point in question["knowledge_points"]
                 ],

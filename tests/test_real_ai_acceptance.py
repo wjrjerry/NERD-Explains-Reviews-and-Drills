@@ -91,8 +91,7 @@ def test_real_ai_qa_question_scoring_and_review_plan_flow() -> None:
                 }
             )
         else:
-            wrong_answer = "A" if question["correct_answer"] != ["A"] else "B"
-            answers.append({"question_id": question["id"], "answer": [wrong_answer]})
+            answers.append({"question_id": question["id"], "answer": []})
 
     status, body = json_request(
         "POST",

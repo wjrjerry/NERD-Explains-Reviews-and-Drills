@@ -32,15 +32,13 @@ def _question_to_response(
             QuestionOption(
                 key=str(option["key"]),
                 text=str(option["text"]),
-                analysis=str(option.get("analysis", "")),
             )
             for option in question.options
         ],
-        correct_answer=[str(answer) for answer in question.correct_answer],
-        analysis=question.analysis,
         knowledge_points=[str(point) for point in question.knowledge_points],
         knowledge_point_ids=point_ids,
         difficulty=question.difficulty.value,
+        hint_count=len(question.hints or []),
     )
 
 

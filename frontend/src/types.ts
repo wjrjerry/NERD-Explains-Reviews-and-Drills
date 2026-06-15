@@ -5,6 +5,7 @@ export type ParseStatus = "uploaded" | "parsing" | "parsed" | "failed";
 export type QuestionType = "single_choice" | "multiple_choice" | "true_false" | "subjective";
 export type Difficulty = "easy" | "medium" | "hard";
 export type MasteryStatus = "unmastered" | "reviewing" | "mastered";
+export type KnowledgeMasteryStatus = "unlearned" | "weak" | "basic" | "proficient";
 
 export interface User {
   id: number;
@@ -77,7 +78,7 @@ export interface KnowledgeGraphNode {
   importance_weight: number;
   level: number;
   sort_order: number;
-  mastery_status: MasteryStatus;
+  mastery_status: KnowledgeMasteryStatus;
   mastery_score: number;
   accuracy: number;
   answered_count: number;
@@ -170,19 +171,25 @@ export interface QaRecord {
 export interface QuestionOption {
   key: string;
   text: string;
-  analysis: string;
 }
 
-export interface Question {
+export interface PracticeQuestion {
   id: number;
   type: QuestionType;
   stem: string;
   options: QuestionOption[];
-  correct_answer: string[];
-  analysis: string;
   knowledge_points: string[];
   knowledge_point_ids: number[];
   difficulty: Difficulty;
+  hint_count: number;
+}
+
+export type Question = PracticeQuestion;
+
+export interface QuestionHint {
+  question_id: number;
+  level: number;
+  hint: string;
 }
 
 export interface TestSubmitAnswer {
@@ -295,7 +302,7 @@ export interface KnowledgePointMaterials {
 export interface KnowledgePointMastery {
   knowledge_point_id: number;
   target_id: number;
-  mastery_status: MasteryStatus;
+  mastery_status: KnowledgeMasteryStatus;
   mastery_score: number;
   accuracy: number;
   answered_count: number;

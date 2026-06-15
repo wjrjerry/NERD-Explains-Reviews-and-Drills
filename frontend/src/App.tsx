@@ -33,6 +33,7 @@ import type {
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgeMasteryStatus,
   KnowledgePointMaterialItem,
   KnowledgePointReference,
   KnowledgeResult,
@@ -77,6 +78,12 @@ type MaterialSourcePreview = {
   url: string;
   contentType: string;
   fileType: Material["file_type"];
+};
+
+type QuestionBatchContext = {
+  materialId: number;
+  targetId: number | null;
+  scope: "material" | "target";
 };
 
 const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard }> = [
@@ -147,6 +154,7 @@ function App() {
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
   const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
+  const [questionBatchContext, setQuestionBatchContext] = useState<QuestionBatchContext | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const parsePollAttemptsRef = useRef<Map<number, number>>(new Map());
@@ -222,6 +230,44 @@ function App() {
       }
     };
   }, [sourcePreview?.url]);
+
+  function handleSelectLearningTarget(targetId: number) {
+    setSelectedTargetId(targetId);
+    setFocusedKnowledgePointIds([]);
+    setQuestionBatchContext(null);
+    setQuestions([]);
+    setTestResult(null);
+
+    const currentMaterialStillInTarget = materials.some(
+      (material) => material.id === selectedMaterialId && material.target_id === targetId
+    );
+    if (!currentMaterialStillInTarget) {
+      setSelectedMaterialId(null);
+      setKnowledge(null);
+      setStructured(null);
+      setPreview(null);
+      setSourcePreview(null);
+    }
+  }
+
+  function handleSelectLearningMaterial(materialId: number | null) {
+    setSelectedMaterialId(materialId);
+    setQuestionBatchContext(null);
+    setQuestions([]);
+    setTestResult(null);
+    if (materialId === null) {
+      setKnowledge(null);
+      setStructured(null);
+      setPreview(null);
+      setSourcePreview(null);
+      return;
+    }
+
+    const material = materials.find((item) => item.id === materialId);
+    if (material) {
+      setSelectedTargetId(material.target_id);
+    }
+  }
 
   useEffect(() => {
     if (!selectedTargetId || !user) {
@@ -680,6 +726,7 @@ function App() {
         return;
       }
 
+      setQuestionBatchContext(null);
       const data = await api.generateQuestions({
         materialId: scope === "material" ? selectedMaterial?.id : undefined,
         targetId: scope === "material" ? undefined : selectedTargetId ?? undefined,
@@ -688,6 +735,18 @@ function App() {
         count,
         difficulty,
         questionTypes
+      });
+      if (!data.material_id) {
+        setNotice({ tone: "danger", text: "题目生成成功但缺少资料归属，无法提交自测。" });
+        setQuestions(data.questions);
+        setView("practice");
+        return;
+      }
+      const batchTargetId = data.target_id ?? selectedMaterial?.target_id ?? selectedTargetId ?? null;
+      setQuestionBatchContext({
+        materialId: data.material_id,
+        targetId: batchTargetId,
+        scope: scope === "material" ? "material" : "target"
       });
       setQuestions(data.questions);
       setView("practice");
@@ -698,20 +757,25 @@ function App() {
   }
 
   async function handleSubmitTest(answers: TestSubmitAnswer[]) {
-    if (!selectedMaterial) {
+    if (!questionBatchContext) {
+      setNotice({ tone: "danger", text: "请先生成题目，再提交自测。" });
       return;
     }
     try {
-      const data = await api.submitTest(selectedMaterial.id, selectedMaterial.target_id, answers);
+      const data = await api.submitTest(questionBatchContext.materialId, questionBatchContext.targetId, answers);
       setTestResult(data);
       setView("results");
       setNotice({ tone: "success", text: "自测已提交。" });
-      const wrongData = await api.listWrongQuestions(1, 10, selectedMaterial.target_id, selectedMaterial.id).catch(() => null);
+      const wrongData = await api
+        .listWrongQuestions(1, 10, questionBatchContext.targetId ?? undefined, questionBatchContext.materialId)
+        .catch(() => null);
       if (wrongData) {
         setWrongQuestions(wrongData.items);
       }
-      const graph = await api.getKnowledgeGraph(selectedMaterial.target_id).catch(() => null);
-      setKnowledgeGraph(graph);
+      if (questionBatchContext.targetId) {
+        const graph = await api.getKnowledgeGraph(questionBatchContext.targetId).catch(() => null);
+        setKnowledgeGraph(graph);
+      }
     } catch (error) {
       setNotice({ tone: "danger", text: `自测提交失败：${readMessage(error)}` });
     }
@@ -757,7 +821,7 @@ function App() {
     }
   }
 
-  async function handleUpdateKnowledgePointMastery(id: number, masteryStatus: WrongQuestion["mastery_status"]) {
+  async function handleUpdateKnowledgePointMastery(id: number, masteryStatus: KnowledgeMasteryStatus) {
     try {
       const updated = await api.updateKnowledgePointMastery(id, masteryStatus);
       setKnowledgeGraph((current) =>
@@ -815,6 +879,7 @@ function App() {
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
     setFocusedKnowledgePointIds([]);
+    setQuestionBatchContext(null);
     setNotice({ tone: "info", text: "已退出登录。" });
   }
 
@@ -898,7 +963,7 @@ function App() {
           <TargetsPage
             targets={targets}
             selectedTargetId={selectedTargetId}
-            onSelect={setSelectedTargetId}
+            onSelect={handleSelectLearningTarget}
             onCreate={handleCreateTarget}
             onUpdate={handleUpdateTarget}
             onDelete={handleDeleteTarget}
@@ -912,13 +977,9 @@ function App() {
             selectedTarget={selectedTarget}
             selectedTargetId={selectedTargetId}
             selectedMaterialId={selectedMaterialId}
-            onSelectTarget={(targetId) => {
-              setSelectedTargetId(targetId);
-              setSelectedMaterialId(null);
-            }}
+            onSelectTarget={handleSelectLearningTarget}
             onSelect={(material) => {
-              setSelectedMaterialId(material.id);
-              setSelectedTargetId(material.target_id);
+              handleSelectLearningMaterial(material.id);
               setView("detail");
             }}
             onUpload={handleUploadMaterial}
@@ -956,8 +1017,14 @@ function App() {
 
         {view === "graph" ? (
           <KnowledgeGraphPage
+            targets={targets}
+            materials={materials}
+            selectedTargetId={selectedTargetId}
+            selectedMaterialId={selectedMaterialId}
             target={selectedTarget}
             graph={knowledgeGraph}
+            onSelectTarget={handleSelectLearningTarget}
+            onSelectMaterial={handleSelectLearningMaterial}
             onGenerate={handleGenerateKnowledgeGraph}
             onUpdatePointMastery={(id, status) => void handleUpdateKnowledgePointMastery(id, status)}
             onFocusQa={(point) => {
@@ -983,10 +1050,16 @@ function App() {
 
         {view === "qa" ? (
           <QaPage
+            targets={targets}
+            materials={materials}
+            selectedTargetId={selectedTargetId}
+            selectedMaterialId={selectedMaterialId}
             target={selectedTarget}
             material={selectedMaterial}
             focusedKnowledgePoints={focusedKnowledgePoints}
             records={qaRecords}
+            onSelectTarget={handleSelectLearningTarget}
+            onSelectMaterial={handleSelectLearningMaterial}
             onAsk={handleAskQuestion}
             onClearFocus={() => setFocusedKnowledgePointIds([])}
           />
@@ -994,10 +1067,17 @@ function App() {
 
         {view === "practice" ? (
           <PracticePage
+            targets={targets}
+            materials={materials}
+            selectedTargetId={selectedTargetId}
+            selectedMaterialId={selectedMaterialId}
             target={selectedTarget}
             material={selectedMaterial}
             focusedKnowledgePoints={focusedKnowledgePoints}
             questions={questions}
+            questionBatchContext={questionBatchContext}
+            onSelectTarget={handleSelectLearningTarget}
+            onSelectMaterial={handleSelectLearningMaterial}
             onGenerate={handleGenerateQuestions}
             onSubmit={handleSubmitTest}
             onClearFocus={() => setFocusedKnowledgePointIds([])}
@@ -1586,6 +1666,67 @@ function SourceFilePreview({
   );
 }
 
+function LearningContextSelector({
+  targets,
+  materials,
+  selectedTargetId,
+  selectedMaterialId,
+  title = "学习上下文",
+  onSelectTarget,
+  onSelectMaterial
+}: {
+  targets: StudyTarget[];
+  materials: Material[];
+  selectedTargetId: number | null;
+  selectedMaterialId: number | null;
+  title?: string;
+  onSelectTarget: (targetId: number) => void;
+  onSelectMaterial: (materialId: number | null) => void;
+}) {
+  const targetMaterials = selectedTargetId
+    ? materials.filter((material) => material.target_id === selectedTargetId)
+    : [];
+  const parsedMaterials = targetMaterials.filter((material) => material.parse_status === "parsed");
+
+  return (
+    <section className="panel context-panel">
+      <PanelTitle icon={GitBranch} title={title} />
+      <div className="toolbar-fields context-fields">
+        <label className="field-block">
+          <span>当前目标</span>
+          <select
+            value={selectedTargetId ?? ""}
+            onChange={(event) => onSelectTarget(Number(event.currentTarget.value))}
+          >
+            <option value="" disabled>请选择学习目标</option>
+            {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+          </select>
+        </label>
+        <label className="field-block">
+          <span>当前资料</span>
+          <select
+            value={selectedMaterialId ?? ""}
+            onChange={(event) => onSelectMaterial(event.currentTarget.value ? Number(event.currentTarget.value) : null)}
+            disabled={!selectedTargetId}
+          >
+            <option value="">不限定资料</option>
+            {targetMaterials.map((material) => (
+              <option key={material.id} value={material.id} disabled={material.parse_status !== "parsed"}>
+                {material.original_filename} · {parseStatusText[material.parse_status]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="form-hint">
+        {selectedTargetId
+          ? `当前目标下有 ${targetMaterials.length} 份资料，其中 ${parsedMaterials.length} 份可用于 AI 学习。`
+          : "请先选择目标，再进行图谱、问答或出题。"}
+      </p>
+    </section>
+  );
+}
+
 function StructuredReader({ structured }: { structured: MaterialStructured }) {
   const [activeSectionId, setActiveSectionId] = useState<number | null>(structured.sections[0]?.id ?? null);
   const visibleChunks = structured.chunks.filter((chunk) => !activeSectionId || chunk.section_id === activeSectionId).slice(0, 12);
@@ -1622,8 +1763,14 @@ function StructuredReader({ structured }: { structured: MaterialStructured }) {
 }
 
 function KnowledgeGraphPage({
+  targets,
+  materials,
+  selectedTargetId,
+  selectedMaterialId,
   target,
   graph,
+  onSelectTarget,
+  onSelectMaterial,
   onGenerate,
   onUpdatePointMastery,
   onFocusQa,
@@ -1631,10 +1778,16 @@ function KnowledgeGraphPage({
   onExport,
   onExportAnki
 }: {
+  targets: StudyTarget[];
+  materials: Material[];
+  selectedTargetId: number | null;
+  selectedMaterialId: number | null;
   target: StudyTarget | null;
   graph: KnowledgeGraph | null;
+  onSelectTarget: (targetId: number) => void;
+  onSelectMaterial: (materialId: number | null) => void;
   onGenerate: () => void;
-  onUpdatePointMastery: (id: number, masteryStatus: WrongQuestion["mastery_status"]) => void;
+  onUpdatePointMastery: (id: number, masteryStatus: KnowledgeMasteryStatus) => void;
   onFocusQa: (point: KnowledgePointReference) => void;
   onFocusPractice: (point: KnowledgePointReference) => void;
   onExport: () => void;
@@ -1649,6 +1802,9 @@ function KnowledgeGraphPage({
     error: string | null;
   }>({ loading: false, materials: [], questions: [], wrongQuestions: [], error: null });
   const activeNode = graph?.nodes.find((node) => node.id === activeId) ?? graph?.nodes[0] ?? null;
+  const graphLevels = Array.from(
+    new Set((graph?.nodes ?? []).map((node) => node.level))
+  ).sort((left, right) => left - right);
 
   useEffect(() => {
     setActiveId(graph?.nodes[0]?.id ?? null);
@@ -1688,8 +1844,18 @@ function KnowledgeGraphPage({
   }, [activeNode?.id]);
 
   return (
-    <div className="two-column graph-layout">
-      <section className="panel wide">
+    <div className="graph-layout">
+      <LearningContextSelector
+        targets={targets}
+        materials={materials}
+        selectedTargetId={selectedTargetId}
+        selectedMaterialId={selectedMaterialId}
+        title="图谱目标"
+        onSelectTarget={onSelectTarget}
+        onSelectMaterial={onSelectMaterial}
+      />
+      <div className="graph-content-grid">
+      <section className="panel">
         <PanelTitle icon={Network} title="知识点图谱" action={target?.title} />
         <div className="quick-actions">
           <button onClick={onGenerate}><RefreshCw size={16} />生成/刷新图谱</button>
@@ -1698,28 +1864,50 @@ function KnowledgeGraphPage({
         </div>
         {graph?.nodes.length ? (
           <div className="graph-canvas">
-            {graph.nodes.map((node) => (
-              <button
-                key={node.id}
-                className={`graph-node ${node.mastery_status} ${activeNode?.id === node.id ? "selected" : ""}`}
-                style={{
-                  width: `${56 + node.importance_weight * 42}px`,
-                  minHeight: `${44 + node.importance_weight * 30}px`
-                }}
-                onClick={() => setActiveId(node.id)}
-                title={`${node.name} · 正确率 ${Math.round(node.accuracy * 100)}%`}
-              >
-                <strong>{node.name}</strong>
-                <span>{Math.round(node.mastery_score * 100)}%</span>
-              </button>
-            ))}
+            {graphLevels.map((level) => {
+              const levelNodes = graph.nodes
+                .filter((node) => node.level === level)
+                .sort((left, right) => left.sort_order - right.sort_order);
+              return (
+                <section className="graph-level" key={level}>
+                  <div className="graph-level-heading">
+                    <strong>{level === 1 ? "核心知识" : `第 ${level} 层知识`}</strong>
+                    <span>{levelNodes.length} 个知识点</span>
+                  </div>
+                  <div className="graph-level-nodes">
+                    {levelNodes.map((node) => {
+                      const parent = node.parent_id
+                        ? graph.nodes.find((item) => item.id === node.parent_id)
+                        : null;
+                      const size = Math.round(88 + Math.min(Math.max(node.importance_weight, 0), 1) * 52);
+                      return (
+                        <button
+                          key={node.id}
+                          className={`graph-node ${node.mastery_status} ${activeNode?.id === node.id ? "selected" : ""}`}
+                          style={{
+                            width: `${size}px`,
+                            minHeight: `${Math.round(size * 0.72)}px`
+                          }}
+                          onClick={() => setActiveId(node.id)}
+                          title={`${node.name} · 重要度 ${Math.round(node.importance_weight * 100)}% · 正确率 ${Math.round(node.accuracy * 100)}%`}
+                        >
+                          <strong>{node.name}</strong>
+                          <span>重要度 {Math.round(node.importance_weight * 100)}%</span>
+                          <small>{parent ? `属于 ${parent.name}` : "核心节点"}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         ) : (
           <EmptyPanel text="当前目标还没有知识图谱，先生成图谱或完成资料解析。" />
         )}
       </section>
 
-      <section className="panel">
+      <section className="panel knowledge-detail-panel">
         <PanelTitle icon={Brain} title="知识点详情" />
         {activeNode ? (
           <div className="detail-stack">
@@ -1737,38 +1925,58 @@ function KnowledgeGraphPage({
               <button onClick={() => onFocusPractice(activeNode)}><ClipboardCheck size={16} />按此点出题</button>
             </div>
             <div className="quick-actions">
-              {(["unmastered", "reviewing", "mastered"] as const).map((status) => (
+              {([
+                ["unlearned", "未学习"],
+                ["weak", "薄弱"],
+                ["basic", "基本掌握"],
+                ["proficient", "熟练"]
+              ] as const).map(([status, label]) => (
                 <button key={status} className={activeNode.mastery_status === status ? "active-pill" : ""} onClick={() => onUpdatePointMastery(activeNode.id, status)}>
-                  {status}
+                  {label}
                 </button>
               ))}
             </div>
             {detail.loading ? <p className="muted-text">正在加载知识点详情...</p> : null}
             {detail.error ? <p className="danger-text">{detail.error}</p> : null}
-            <InfoList title="精确关联资料" items={detail.materials.map((item) => `${item.original_filename}${item.evidence_text ? `：${item.evidence_text}` : ""}`)} />
-            <InfoList title="关联题目" items={detail.questions.map((item) => item.stem)} />
-            <InfoList title="关联错题" items={detail.wrongQuestions.map((item) => item.stem)} />
+            <div className="knowledge-detail-scroll">
+              <InfoList title="精确关联资料" items={detail.materials.map((item) => `${item.original_filename}${item.evidence_text ? `：${item.evidence_text}` : ""}`)} />
+              <InfoList title="关联题目" items={detail.questions.map((item) => item.stem)} />
+              <InfoList title="关联错题" items={detail.wrongQuestions.map((item) => item.stem)} />
+            </div>
           </div>
         ) : (
           <p className="muted-text">请选择一个知识点。</p>
         )}
       </section>
+      </div>
     </div>
   );
 }
 
 function QaPage({
+  targets,
+  materials,
+  selectedTargetId,
+  selectedMaterialId,
   target,
   material,
   focusedKnowledgePoints,
   records,
+  onSelectTarget,
+  onSelectMaterial,
   onAsk,
   onClearFocus
 }: {
+  targets: StudyTarget[];
+  materials: Material[];
+  selectedTargetId: number | null;
+  selectedMaterialId: number | null;
   target: StudyTarget | null;
   material: Material | null;
   focusedKnowledgePoints: KnowledgePointReference[];
   records: QaRecord[];
+  onSelectTarget: (targetId: number) => void;
+  onSelectMaterial: (materialId: number | null) => void;
   onAsk: (formData: FormData) => void;
   onClearFocus: () => void;
 }) {
@@ -1777,8 +1985,18 @@ function QaPage({
   const defaultScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
 
   return (
-    <div className="two-column qa-layout">
-      <form className="panel form-panel" onSubmit={(event) => submitForm(event, onAsk)}>
+    <div className="qa-layout">
+      <LearningContextSelector
+        targets={targets}
+        materials={materials}
+        selectedTargetId={selectedTargetId}
+        selectedMaterialId={selectedMaterialId}
+        title="问答上下文"
+        onSelectTarget={onSelectTarget}
+        onSelectMaterial={onSelectMaterial}
+      />
+      <div className="qa-content-grid">
+      <form className="panel form-panel qa-compose-panel" onSubmit={(event) => submitForm(event, onAsk)}>
         <PanelTitle icon={MessageSquare} title="提问" />
         <p className="muted-text">
           当前目标：{target?.title ?? "未选择"}；当前资料：{material?.original_filename ?? "未选择"}
@@ -1792,7 +2010,7 @@ function QaPage({
         <select name="qa_scope" defaultValue={defaultScope}>
           <option value="target" disabled={!target}>目标范围</option>
           <option value="knowledge_point" disabled={!target || !focusedKnowledgePoints.length}>聚焦知识点</option>
-          <option value="material" disabled={!material}>当前资料</option>
+          <option value="material" disabled={material?.parse_status !== "parsed"}>当前资料</option>
         </select>
         {focusedKnowledgePoints[0] ? <input type="hidden" name="knowledge_point_id" value={focusedKnowledgePoints[0].id} /> : null}
         <textarea name="question" placeholder="提出你的问题，可围绕目标、资料或选中的知识点" required />
@@ -1818,33 +2036,52 @@ function QaPage({
           ))}
         </div>
       </section>
+      </div>
     </div>
   );
 }
 
 function PracticePage({
+  targets,
+  materials,
+  selectedTargetId,
+  selectedMaterialId,
   target,
   material,
   focusedKnowledgePoints,
   questions,
+  questionBatchContext,
+  onSelectTarget,
+  onSelectMaterial,
   onGenerate,
   onSubmit,
   onClearFocus
 }: {
+  targets: StudyTarget[];
+  materials: Material[];
+  selectedTargetId: number | null;
+  selectedMaterialId: number | null;
   target: StudyTarget | null;
   material: Material | null;
   focusedKnowledgePoints: KnowledgePointReference[];
   questions: Question[];
+  questionBatchContext: QuestionBatchContext | null;
+  onSelectTarget: (targetId: number) => void;
+  onSelectMaterial: (materialId: number | null) => void;
   onGenerate: (formData: FormData) => void;
   onSubmit: (answers: TestSubmitAnswer[]) => void;
   onClearFocus: () => void;
 }) {
   const [objectiveAnswers, setObjectiveAnswers] = useState<Record<number, string[]>>({});
   const [subjectiveAnswers, setSubjectiveAnswers] = useState<Record<number, string>>({});
+  const [questionHints, setQuestionHints] = useState<Record<number, Record<number, string>>>({});
+  const [hintLoading, setHintLoading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setObjectiveAnswers({});
     setSubjectiveAnswers({});
+    setQuestionHints({});
+    setHintLoading({});
   }, [questions]);
 
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 出题页面。" />;
@@ -1855,33 +2092,90 @@ function PracticePage({
       : { question_id: question.id, answer: objectiveAnswers[question.id] ?? [] }
   );
   const defaultScope = focusedKnowledgePoints.length && target ? "target" : target ? "target" : "material";
+  const batchMaterial = questionBatchContext
+    ? materials.find((item) => item.id === questionBatchContext.materialId)
+    : null;
+  const batchTarget = questionBatchContext?.targetId
+    ? targets.find((item) => item.id === questionBatchContext.targetId)
+    : null;
+
+  async function handleRevealHint(questionId: number, level: number) {
+    if (questionHints[questionId]?.[level]) {
+      return;
+    }
+
+    const key = `${questionId}-${level}`;
+    setHintLoading((current) => ({ ...current, [key]: true }));
+    try {
+      const data = await api.getQuestionHint(questionId, level);
+      setQuestionHints((current) => ({
+        ...current,
+        [questionId]: {
+          ...(current[questionId] ?? {}),
+          [level]: data.hint
+        }
+      }));
+    } catch (error) {
+      setQuestionHints((current) => ({
+        ...current,
+        [questionId]: {
+          ...(current[questionId] ?? {}),
+          [level]: `提示加载失败：${readMessage(error)}`
+        }
+      }));
+    } finally {
+      setHintLoading((current) => ({ ...current, [key]: false }));
+    }
+  }
 
   return (
     <div className="practice-layout">
+      <LearningContextSelector
+        targets={targets}
+        materials={materials}
+        selectedTargetId={selectedTargetId}
+        selectedMaterialId={selectedMaterialId}
+        title="出题上下文"
+        onSelectTarget={onSelectTarget}
+        onSelectMaterial={onSelectMaterial}
+      />
       <form className="panel practice-toolbar" onSubmit={(event) => submitForm(event, onGenerate)}>
         <PanelTitle icon={ClipboardCheck} title="生成练习题" />
-        <div className="toolbar-fields practice-scope">
-          <select name="question_scope" defaultValue={defaultScope}>
-            <option value="target" disabled={!target}>目标/知识点</option>
-            <option value="material" disabled={!material}>当前资料</option>
-          </select>
-          <input name="count" type="number" min="1" max="10" defaultValue="5" />
-        </div>
-        <div className="checkbox-list">
-          {questionTypeOptions.map((item) => (
-            <label key={item.value} className="checkbox-row">
-              <input name="question_types" type="checkbox" value={item.value} defaultChecked={item.value !== "subjective"} />
-              <span>{item.label}</span>
-            </label>
-          ))}
-        </div>
-        <div className="toolbar-fields">
-          <select name="difficulty" defaultValue="medium">
-            <option value="easy">easy</option>
-            <option value="medium">medium</option>
-            <option value="hard">hard</option>
-          </select>
-          <input name="extra_requirement" placeholder="自定义要求：如偏期末风格" />
+        <div className="practice-form-grid">
+          <label className="field-block">
+            <span>出题范围</span>
+            <select name="question_scope" defaultValue={defaultScope}>
+              <option value="target" disabled={!target}>目标/知识点</option>
+              <option value="material" disabled={material?.parse_status !== "parsed"}>当前资料</option>
+            </select>
+          </label>
+          <label className="field-block">
+            <span>题目数量</span>
+            <input name="count" type="number" min="1" max="10" defaultValue="5" />
+          </label>
+          <label className="field-block">
+            <span>难度</span>
+            <select name="difficulty" defaultValue="medium">
+              <option value="easy">easy</option>
+              <option value="medium">medium</option>
+              <option value="hard">hard</option>
+            </select>
+          </label>
+          <div className="field-block question-type-field">
+            <span>题型</span>
+            <div className="checkbox-list">
+              {questionTypeOptions.map((item) => (
+                <label key={item.value} className="checkbox-row">
+                  <input name="question_types" type="checkbox" value={item.value} defaultChecked={item.value !== "subjective"} />
+                  <span>{item.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="field-block extra-requirement-field">
+            <span>自定义要求</span>
+            <textarea name="extra_requirement" placeholder="例如：偏期末考试风格，优先考概念辨析；选择题干扰项要更接近真实易错点。" />
+          </label>
         </div>
         {focusedKnowledgePoints.length ? (
           <div className="focused-points">
@@ -1898,12 +2192,20 @@ function PracticePage({
           <button className="primary-button" type="submit">
             <Sparkles size={16} />生成题目
           </button>
-          <button className="ghost-button" type="button" disabled={!questions.length || !material} onClick={() => onSubmit(submitAnswers)}>
+          <button className="ghost-button" type="button" disabled={!questions.length || !questionBatchContext} onClick={() => onSubmit(submitAnswers)}>
             提交自测
           </button>
         </div>
       </form>
-      {!material ? <p className="muted-text">当前后端自测提交仍要求 material_id，请选择目标下任一资料后再提交自测。</p> : null}
+      {questionBatchContext ? (
+        <p className="muted-text">
+          本批题目来源：{batchTarget?.title ?? `目标 ${questionBatchContext.targetId ?? "未限定"}`} ·
+          {batchMaterial?.original_filename ?? `资料 ${questionBatchContext.materialId}`} ·
+          {questionBatchContext.scope === "material" ? "按资料生成" : "按目标/知识点生成"}
+        </p>
+      ) : (
+        <p className="muted-text">请先生成题目，系统会自动记录本批题目的真实资料归属后再允许提交自测。</p>
+      )}
 
       <div className="question-list">
         {questions.length ? (
@@ -1944,13 +2246,44 @@ function PracticePage({
                         <span>{option.key}</span>
                         <div>
                           <strong>{option.text}</strong>
-                          {option.analysis ? <small>{option.analysis}</small> : null}
                         </div>
                       </button>
                     );
                   })}
                 </div>
               )}
+              {question.hint_count ? (
+                <div className="hint-box">
+                  <div className="hint-actions">
+                    {Array.from({ length: question.hint_count }, (_, hintIndex) => {
+                      const level = hintIndex + 1;
+                      const loading = hintLoading[`${question.id}-${level}`];
+                      return (
+                        <button
+                          className="ghost-button"
+                          key={level}
+                          type="button"
+                          disabled={loading}
+                          onClick={() => void handleRevealHint(question.id, level)}
+                        >
+                          {loading ? "加载中" : `提示 ${level}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {Object.entries(questionHints[question.id] ?? {}).length ? (
+                    <div className="hint-list">
+                      {Object.entries(questionHints[question.id] ?? {})
+                        .sort(([left], [right]) => Number(left) - Number(right))
+                        .map(([level, hint]) => (
+                          <p key={level}><strong>提示 {level}：</strong>{hint}</p>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="form-hint">需要时可逐层查看提示，完整答案会在提交自测后显示。</p>
+                  )}
+                </div>
+              ) : null}
               <p className="analysis">
                 知识点：{question.knowledge_points.length ? question.knowledge_points.join("、") : "未标注"} · 难度：{question.difficulty}
               </p>

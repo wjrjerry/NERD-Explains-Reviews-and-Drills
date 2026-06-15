@@ -90,6 +90,12 @@ class Question(Base):
         nullable=False,
         comment="答案解析",
     )
+    hints: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        comment="逐层学习提示，按由浅入深顺序保存",
+    )
     knowledge_points: Mapped[list[str]] = mapped_column(
         JSON,
         nullable=False,

@@ -4,6 +4,7 @@ import type {
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgeMasteryStatus,
   KnowledgePointMastery,
   KnowledgePointMaterials,
   KnowledgeResult,
@@ -11,6 +12,7 @@ import type {
   MaterialPreview,
   MaterialStructured,
   QaRecord,
+  QuestionHint,
   QuestionType,
   Question,
   ReviewPlan,
@@ -255,7 +257,7 @@ export const api = {
     request<Pagination<WrongQuestion>>(
       `/knowledge-points/${knowledgePointId}/wrong-questions${buildQuery({ page, page_size: pageSize })}`
     ),
-  updateKnowledgePointMastery: (knowledgePointId: number, masteryStatus: WrongQuestion["mastery_status"]) =>
+  updateKnowledgePointMastery: (knowledgePointId: number, masteryStatus: KnowledgeMasteryStatus) =>
     request<KnowledgePointMastery>(`/knowledge-points/${knowledgePointId}/mastery`, {
       method: "PATCH",
       body: JSON.stringify({ mastery_status: masteryStatus })
@@ -289,6 +291,8 @@ export const api = {
         count: scope.count
       })
     }),
+  getQuestionHint: (questionId: number, level: number) =>
+    request<QuestionHint>(`/questions/${questionId}/hints/${level}`),
 
   submitTest: (materialId: number, targetId: number | null, answers: TestSubmitAnswer[]) =>
     request<TestResult>("/tests/submit", {
