@@ -29,6 +29,10 @@ class TestSubmitRequest(BaseModel):
 
 class TestResultItem(BaseModel):
     question_id: int
+    knowledge_point_ids: list[int] = Field(
+        default_factory=list,
+        description="Knowledge graph point IDs linked to this question.",
+    )
     user_answer: list[str]
     correct_answer: list[str]
     is_correct: bool
@@ -48,6 +52,15 @@ class TestResultItem(BaseModel):
     )
 
 
+class KnowledgePointTestSummary(BaseModel):
+    knowledge_point_id: int
+    total_count: int
+    correct_count: int
+    wrong_count: int
+    accuracy: float
+    average_score: float
+
+
 class TestSubmitResponse(BaseModel):
     test_record_id: int
     score: float
@@ -56,3 +69,4 @@ class TestSubmitResponse(BaseModel):
     correct_count: int
     wrong_count: int
     results: list[TestResultItem]
+    knowledge_point_summary: list[KnowledgePointTestSummary] = Field(default_factory=list)

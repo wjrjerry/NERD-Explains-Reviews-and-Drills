@@ -28,33 +28,41 @@ async def generate_questions(
     3. Reject the request if the material is not parsed.
     4. Call question_service.generate_questions() to generate and save questions.
     """
-    material = await get_material_for_ai(
-        db,
-        user_id=current_user.id,
-        material_id=payload.material_id,
-    )
-    if material is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Material not found.",
+    parsed_text: str | None = None
+    if payload.material_id is not None and payload.target_id is None:
+        material = await get_material_for_ai(
+            db,
+            user_id=current_user.id,
+            material_id=payload.material_id,
         )
+        if material is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Material not found.",
+            )
 
-    if material.parse_status != "parsed":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Material is not parsed yet.",
-        )
+        if material.parse_status != "parsed":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Material is not parsed yet.",
+            )
+        parsed_text = material.parsed_text
 
     try:
         result = await question_service.generate_questions(
             db,
             payload,
             user_id=current_user.id,
-            parsed_text=material.parsed_text,
+            parsed_text=parsed_text,
         )
     except LlmServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
 

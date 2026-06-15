@@ -20,6 +20,7 @@ router = APIRouter(prefix="/wrong-questions", tags=["wrong-questions"])
 async def list_wrong_questions(
     target_id: int | None = Query(default=None, description="课程/考试目标 ID"),
     material_id: int | None = Query(default=None, description="资料 ID"),
+    knowledge_point_id: int | None = Query(default=None, description="知识点 ID"),
     mastery_status: MasteryStatus | None = Query(default=None, description="掌握状态"),
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
@@ -32,6 +33,7 @@ async def list_wrong_questions(
         user_id=current_user.id,
         target_id=target_id,
         material_id=material_id,
+        knowledge_point_id=knowledge_point_id,
         mastery_status=mastery_status,
         page=page,
         page_size=page_size,

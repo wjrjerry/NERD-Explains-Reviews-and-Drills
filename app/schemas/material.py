@@ -23,6 +23,7 @@ class MaterialResponse(BaseModel):
     file_size: int
     parse_status: MaterialParseStatus
     parse_error: str | None
+    parse_warning: str | None = None
     created_at: datetime
     updated_at: datetime
 

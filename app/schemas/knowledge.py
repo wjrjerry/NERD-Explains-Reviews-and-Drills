@@ -1,42 +1,52 @@
-"""Pydantic schemas for the AI knowledge extraction API.
+"""Pydantic schemas for the unified AI knowledge extraction API."""
 
-Schemas describe the shape of API input/output. They are not database tables.
-The frontend and backend should both treat these fields as the contract for
-POST /knowledge/extract.
-"""
+from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.knowledge_graph import KnowledgeGraphResponse
+
+
+class KnowledgeExtractionScope(StrEnum):
+    material = "material"
+    target = "target"
 
 
 class KnowledgeExtractRequest(BaseModel):
     """Request body for starting knowledge extraction.
 
-    material_id:
-        The uploaded material to analyze. This material must already be parsed.
-
-    target_id:
-        Optional course/exam target. Keeping it optional lets the first version
-        work even if target association is not finished yet.
+    material_id starts material-level extraction for one parsed material.
+    target_id starts target-level extraction for all parsed materials under one
+    study target and also refreshes the target-level knowledge graph.
     """
 
-    material_id: int = Field(description="Parsed material ID.")
+    material_id: int | None = Field(default=None, description="Parsed material ID.")
     target_id: int | None = Field(default=None, description="Study target ID.")
+    force_regenerate: bool = Field(
+        default=False,
+        description="Regenerate target-level extraction and graph even when existing data is present.",
+    )
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "KnowledgeExtractRequest":
+        """Require exactly one extraction scope."""
+        if self.material_id is None and self.target_id is None:
+            raise ValueError("material_id 或 target_id 至少需要提供一个")
+        if self.material_id is not None and self.target_id is not None:
+            raise ValueError("material_id 和 target_id 不能同时提供")
+        return self
 
 
 class KnowledgeExtractResponse(BaseModel):
-    """Response body returned after knowledge extraction.
+    """Response body returned after material-level or target-level extraction."""
 
-    These fields are designed for the "资料详情与 AI 学习页":
-    - summary: short overview of the material.
-    - outline: chapter or section structure.
-    - keywords: important terms.
-    - key_points: concepts the student should understand.
-    - exam_points: likely exam/review focus points.
-    """
-
-    material_id: int
+    extraction_id: int | None = None
+    scope: KnowledgeExtractionScope
+    material_id: int | None = None
+    target_id: int | None = None
     summary: str
     outline: list[str]
     keywords: list[str]
     key_points: list[str]
     exam_points: list[str]
+    knowledge_graph: KnowledgeGraphResponse | None = None

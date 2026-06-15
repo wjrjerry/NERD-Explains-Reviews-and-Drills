@@ -1,37 +1,105 @@
-"""Database access functions for knowledge extraction results.
+"""Database access for AI knowledge extraction results."""
 
-Repository functions should contain SQLAlchemy queries only. They should not
-decide business rules such as whether a material is parsed or whether AI should
-be called. Those decisions belong in knowledge_service.
-"""
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-
-def create_knowledge_result():
-    """Insert or update one material's knowledge extraction result.
-
-    Typical use:
-    - knowledge_service receives AI output.
-    - It calls this function to persist summary/outline/keywords/key_points.
-    - If the same material is extracted again, update the existing row instead
-      of creating duplicate knowledge records.
-    """
-    # TODO: Accept db session and knowledge fields.
-    # TODO: Accept user_id, target_id, material_id, summary, outline, keywords,
-    #       key_points, and exam_points.
-    # TODO: Insert/update the KnowledgeResult row.
-    # TODO: Return the saved row.
-    pass
+from app.models.knowledge import (
+    KnowledgeExtraction,
+    KnowledgeExtractionScope,
+    KnowledgeExtractionStatus,
+)
 
 
-def get_knowledge_result_by_material_id():
-    """Fetch the saved knowledge extraction result for one material.
+class KnowledgeRepository:
+    """Repository for material-level and target-level knowledge extractions."""
 
-    Typical use:
-    - The frontend opens the material detail page.
-    - The service first checks whether extraction has already been generated.
-    - If a saved result exists, return it directly instead of calling AI again.
-    """
-    # TODO: Accept db session, user_id, and material_id.
-    # TODO: Query by material_id and user ownership.
-    # TODO: Return None if no extraction result exists.
-    pass
+    @staticmethod
+    async def save_extraction(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        scope: KnowledgeExtractionScope,
+        target_id: int | None,
+        material_id: int | None,
+        summary: str,
+        outline: list[str],
+        keywords: list[str],
+        key_points: list[str],
+        exam_points: list[str],
+        status: KnowledgeExtractionStatus = KnowledgeExtractionStatus.completed,
+        error_message: str | None = None,
+    ) -> KnowledgeExtraction:
+        """Insert one extraction snapshot and return it."""
+        row = KnowledgeExtraction(
+            user_id=user_id,
+            scope=scope,
+            target_id=target_id,
+            material_id=material_id,
+            status=status,
+            summary=summary,
+            outline=outline,
+            keywords=keywords,
+            key_points=key_points,
+            exam_points=exam_points,
+            error_message=error_message,
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return row
+
+    @staticmethod
+    async def get_latest(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        scope: KnowledgeExtractionScope,
+        target_id: int | None = None,
+        material_id: int | None = None,
+    ) -> KnowledgeExtraction | None:
+        """Return the latest extraction for one material or target."""
+        conditions = [
+            KnowledgeExtraction.user_id == user_id,
+            KnowledgeExtraction.scope == scope,
+        ]
+        if target_id is not None:
+            conditions.append(KnowledgeExtraction.target_id == target_id)
+        if material_id is not None:
+            conditions.append(KnowledgeExtraction.material_id == material_id)
+
+        result = await db.execute(
+            select(KnowledgeExtraction)
+            .where(*conditions)
+            .order_by(KnowledgeExtraction.created_at.desc(), KnowledgeExtraction.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_latest_material_extractions_by_target(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        target_id: int,
+    ) -> list[KnowledgeExtraction]:
+        """Return the latest material-level extraction for each material."""
+        result = await db.execute(
+            select(KnowledgeExtraction)
+            .where(
+                KnowledgeExtraction.user_id == user_id,
+                KnowledgeExtraction.target_id == target_id,
+                KnowledgeExtraction.scope == KnowledgeExtractionScope.material,
+            )
+            .order_by(
+                KnowledgeExtraction.material_id.asc(),
+                KnowledgeExtraction.created_at.desc(),
+                KnowledgeExtraction.id.desc(),
+            )
+        )
+
+        latest_by_material: dict[int, KnowledgeExtraction] = {}
+        for row in result.scalars().all():
+            if row.material_id is None or row.material_id in latest_by_material:
+                continue
+            latest_by_material[row.material_id] = row
+        return list(latest_by_material.values())

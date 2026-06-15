@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -39,6 +39,12 @@ class QaRecord(Base):
         nullable=False,
         comment="本次问答所依据的资料ID，后续可与 materials 表建立外键",
     )
+    target_id: Mapped[int | None] = mapped_column(
+        ForeignKey("study_targets.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment="本次问答所属课程/考试目标ID；目标级问答时写入",
+    )
     question: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -70,4 +76,43 @@ class QaRecord(Base):
         server_default=func.now(),
         nullable=False,
         comment="问答记录创建时间",
+    )
+
+
+class QaKnowledgePoint(Base):
+    """Relation between one QA record and graph knowledge points."""
+
+    __tablename__ = "qa_knowledge_points"
+    __table_args__ = (
+        UniqueConstraint(
+            "qa_record_id",
+            "knowledge_point_id",
+            name="uq_qa_knowledge_points_record_point",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    qa_record_id: Mapped[int] = mapped_column(
+        ForeignKey("qa_records.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="问答记录ID",
+    )
+    knowledge_point_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_points.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="知识点ID",
+    )
+    relevance_score: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=1.0,
+        comment="问答与知识点的关联强度",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        comment="关联创建时间",
     )

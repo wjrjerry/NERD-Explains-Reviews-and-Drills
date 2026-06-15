@@ -186,6 +186,24 @@ async def _set_material_file_path(material_id: int, file_path: str) -> None:
         await conn.close()
 
 
+async def _get_material_parse_fields(material_id: int) -> dict:
+    conn = await asyncpg.connect(_database_url_for_asyncpg())
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT parse_status, parsed_text, parse_error
+            FROM materials
+            WHERE id = $1
+            """,
+            material_id,
+        )
+    finally:
+        await conn.close()
+
+    assert row is not None
+    return dict(row)
+
+
 def test_auth_current_user_and_study_target_crud() -> None:
     suffix = time.time_ns()
     username = f"a_core_{suffix}"
@@ -244,15 +262,28 @@ def test_material_upload_async_parse_preview_and_delete() -> None:
     assert_success_response(body)
     material = body["data"]["material"]
     assert material["parse_status"] == "parsing"
+    assert "parsed_text" not in material
 
     material = _wait_for_material_status(token, material["id"], "parsed")
     assert material["parse_error"] is None
+    assert "parsed_text" not in material
+
+    parse_fields = asyncio.run(_get_material_parse_fields(material["id"]))
+    assert parse_fields["parse_status"] == "parsed"
+    assert "x + 1 = 3" in parse_fields["parsed_text"]
+    assert parse_fields["parse_error"] is None
 
     status, body = _json_request("GET", f"/materials?target_id={target['id']}", token=token)
     assert status == 200
     assert_success_response(body)
     assert_page_result(body["data"])
     assert any(item["id"] == material["id"] for item in body["data"]["items"])
+    assert all("parsed_text" not in item for item in body["data"]["items"])
+
+    status, body = _json_request("GET", f"/materials/{material['id']}", token=token)
+    assert status == 200
+    assert_success_response(body)
+    assert "parsed_text" not in body["data"]["material"]
 
     status, body = _json_request("GET", f"/materials/{material['id']}/preview", token=token)
     assert status == 200
@@ -352,6 +383,60 @@ def test_material_parse_failure_is_recorded() -> None:
 
     material = _wait_for_material_status(token, material_id, "failed")
     assert material["parse_error"] == "资料文件不存在"
+
+
+def test_ai_routes_reject_unparsed_material() -> None:
+    suffix = time.time_ns()
+    username = f"a_unparsed_ai_{suffix}"
+    _register(username)
+    token, _user = _login(username)
+    target = _create_target(token)
+
+    status, body = _multipart_request(
+        "/materials",
+        token=token,
+        fields={"target_id": str(target["id"]), "auto_parse": "false"},
+        file_field="file",
+        file_path=TEST_MATERIAL_DIR / "test.txt",
+        content_type="text/plain",
+    )
+    assert status == 200
+    assert_success_response(body)
+    material = body["data"]["material"]
+    assert material["parse_status"] == "uploaded"
+    assert "parsed_text" not in material
+
+    status, body = _json_request(
+        "POST",
+        "/knowledge/extract",
+        token=token,
+        payload={"material_id": material["id"], "target_id": target["id"]},
+    )
+    assert status == 409
+    assert body["detail"] == "Material is not parsed yet."
+
+    status, body = _json_request(
+        "POST",
+        "/qa/ask",
+        token=token,
+        payload={"material_id": material["id"], "question": "这份资料讲了什么？"},
+    )
+    assert status == 409
+    assert body["detail"] == "Material is not parsed yet."
+
+    status, body = _json_request(
+        "POST",
+        "/questions/generate",
+        token=token,
+        payload={
+            "material_id": material["id"],
+            "question_types": ["single_choice"],
+            "difficulty": "easy",
+            "count": 1,
+        },
+    )
+    assert status == 409
+    assert body["detail"] == "Material is not parsed yet."
 
 
 def test_admin_permissions_tasks_retry_and_logs() -> None:

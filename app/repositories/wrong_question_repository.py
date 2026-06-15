@@ -1,7 +1,11 @@
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.wrong_question import MasteryStatus, WrongQuestion
+from app.models.wrong_question import (
+    MasteryStatus,
+    WrongQuestion,
+    WrongQuestionKnowledgePoint,
+)
 
 
 class WrongQuestionRepository:
@@ -16,35 +20,91 @@ class WrongQuestionRepository:
         wrong_items: list[dict[str, object]],
     ) -> list[WrongQuestion]:
         """Bulk insert wrong-question records after a test submission."""
-        rows = [
-            WrongQuestion(
-                user_id=user_id,
-                test_record_id=test_record_id,
-                question_id=int(item["question_id"]),
-                target_id=(
-                    int(item["target_id"]) if item.get("target_id") is not None else None
-                ),
-                material_id=int(item["material_id"]),
-                stem=str(item["stem"]),
-                user_answer=[str(answer) for answer in item["user_answer"]],
-                correct_answer=[str(answer) for answer in item["correct_answer"]],
-                analysis=str(item["analysis"]),
-                wrong_reason=str(item["wrong_reason"]),
-                knowledge_points=[str(point) for point in item["knowledge_points"]],
-                mastery_status=MasteryStatus.unmastered,
+        rows: list[WrongQuestion] = []
+        point_ids_by_index: list[list[int]] = []
+        for item in wrong_items:
+            rows.append(
+                WrongQuestion(
+                    user_id=user_id,
+                    test_record_id=test_record_id,
+                    question_id=int(item["question_id"]),
+                    target_id=(
+                        int(item["target_id"])
+                        if item.get("target_id") is not None
+                        else None
+                    ),
+                    material_id=int(item["material_id"]),
+                    stem=str(item["stem"]),
+                    user_answer=[str(answer) for answer in item["user_answer"]],
+                    correct_answer=[str(answer) for answer in item["correct_answer"]],
+                    analysis=str(item["analysis"]),
+                    wrong_reason=str(item["wrong_reason"]),
+                    knowledge_points=[str(point) for point in item["knowledge_points"]],
+                    mastery_status=MasteryStatus.unmastered,
+                )
             )
-            for item in wrong_items
-        ]
+            raw_point_ids = item.get("knowledge_point_ids", [])
+            if not isinstance(raw_point_ids, list):
+                raw_point_ids = []
+            normalized_point_ids: list[int] = []
+            for point_id in raw_point_ids:
+                try:
+                    normalized_point_ids.append(int(point_id))
+                except (TypeError, ValueError):
+                    continue
+            point_ids_by_index.append(list(dict.fromkeys(normalized_point_ids)))
 
         if not rows:
             return []
 
         db.add_all(rows)
+        await db.flush()
+
+        link_rows: list[WrongQuestionKnowledgePoint] = []
+        for row, point_ids in zip(rows, point_ids_by_index, strict=True):
+            for point_id in point_ids:
+                link_rows.append(
+                    WrongQuestionKnowledgePoint(
+                        wrong_question_id=row.id,
+                        knowledge_point_id=point_id,
+                        wrong_reason=row.wrong_reason,
+                        relevance_score=1.0,
+                    )
+                )
+        if link_rows:
+            db.add_all(link_rows)
+
         await db.commit()
         for row in rows:
             await db.refresh(row)
 
         return rows
+
+    @staticmethod
+    async def list_knowledge_point_ids_by_wrong_question_ids(
+        db: AsyncSession,
+        *,
+        wrong_question_ids: list[int],
+    ) -> dict[int, list[int]]:
+        """Return linked knowledge point IDs keyed by wrong_question_id."""
+        if not wrong_question_ids:
+            return {}
+
+        result = await db.execute(
+            select(
+                WrongQuestionKnowledgePoint.wrong_question_id,
+                WrongQuestionKnowledgePoint.knowledge_point_id,
+            )
+            .where(WrongQuestionKnowledgePoint.wrong_question_id.in_(wrong_question_ids))
+            .order_by(
+                WrongQuestionKnowledgePoint.wrong_question_id.asc(),
+                WrongQuestionKnowledgePoint.id.asc(),
+            )
+        )
+        links: dict[int, list[int]] = {}
+        for wrong_question_id, point_id in result.all():
+            links.setdefault(int(wrong_question_id), []).append(int(point_id))
+        return links
 
     @staticmethod
     async def list_wrong_questions(
@@ -53,26 +113,46 @@ class WrongQuestionRepository:
         user_id: int,
         target_id: int | None = None,
         material_id: int | None = None,
+        knowledge_point_id: int | None = None,
         mastery_status: MasteryStatus | None = None,
         page: int = 1,
         page_size: int = 10,
     ) -> tuple[list[WrongQuestion], int]:
         """Query wrong questions with pagination and optional filters."""
         conditions = [WrongQuestion.user_id == user_id]
+        from_clause = select(WrongQuestion)
         if target_id is not None:
             conditions.append(WrongQuestion.target_id == target_id)
         if material_id is not None:
             conditions.append(WrongQuestion.material_id == material_id)
+        if knowledge_point_id is not None:
+            conditions.append(
+                WrongQuestionKnowledgePoint.knowledge_point_id == knowledge_point_id
+            )
+            from_clause = from_clause.join(
+                WrongQuestionKnowledgePoint,
+                WrongQuestion.id == WrongQuestionKnowledgePoint.wrong_question_id,
+            )
         if mastery_status is not None:
             conditions.append(WrongQuestion.mastery_status == mastery_status)
 
-        total_result = await db.execute(
-            select(func.count()).select_from(WrongQuestion).where(*conditions)
-        )
+        if knowledge_point_id is None:
+            total_query = select(func.count()).select_from(WrongQuestion).where(*conditions)
+        else:
+            total_query = (
+                select(func.count())
+                .select_from(WrongQuestion)
+                .join(
+                    WrongQuestionKnowledgePoint,
+                    WrongQuestion.id == WrongQuestionKnowledgePoint.wrong_question_id,
+                )
+                .where(*conditions)
+            )
+        total_result = await db.execute(total_query)
         total = int(total_result.scalar_one())
 
         result = await db.execute(
-            select(WrongQuestion)
+            from_clause
             .where(*conditions)
             .order_by(WrongQuestion.created_at.desc(), WrongQuestion.id.desc())
             .offset((page - 1) * page_size)

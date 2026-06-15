@@ -149,6 +149,8 @@ class MaterialRepository:
         parse_status: MaterialParseStatus,
         parsed_text: str | None = None,
         parse_error: str | None = None,
+        parse_warning: str | None = None,
+        parse_metadata: str | None = None,
     ) -> Material:
         """更新资料解析结果。
 
@@ -157,9 +159,35 @@ class MaterialRepository:
         material.parse_status = parse_status
         material.parsed_text = parsed_text
         material.parse_error = parse_error
+        material.parse_warning = parse_warning
+        material.parse_metadata = parse_metadata
 
         db.add(material)
         await db.commit()
         await db.refresh(material)
 
         return material
+
+    @staticmethod
+    async def list_parsed_by_target(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        target_id: int,
+    ) -> list[Material]:
+        """查询某个目标下已解析完成且未删除的资料。
+
+        AI 知识图谱生成只消费资料模块产出的 parsed_text，不负责资料解析。
+        """
+        result = await db.execute(
+            select(Material)
+            .where(
+                Material.user_id == user_id,
+                Material.target_id == target_id,
+                Material.parse_status == MaterialParseStatus.parsed,
+                Material.is_deleted.is_(False),
+                Material.parsed_text.is_not(None),
+            )
+            .order_by(Material.created_at.asc(), Material.id.asc())
+        )
+        return list(result.scalars().all())

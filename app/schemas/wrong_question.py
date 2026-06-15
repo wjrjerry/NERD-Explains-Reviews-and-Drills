@@ -20,6 +20,7 @@ class WrongQuestionResponse(BaseModel):
     analysis: str
     wrong_reason: str
     knowledge_points: list[str]
+    knowledge_point_ids: list[int] = Field(default_factory=list)
     mastery_status: MasteryStatus
 
 

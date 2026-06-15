@@ -1,82 +1,226 @@
-"""Business service for the AI knowledge extraction module.
+"""Business service for unified material/target knowledge extraction."""
 
-The service layer owns the business workflow. The router checks HTTP concerns,
-while this file should eventually coordinate material data, AI generation, and
-database persistence.
-"""
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.knowledge import KnowledgeExtractRequest, KnowledgeExtractResponse
+from app.models.knowledge import KnowledgeExtraction, KnowledgeExtractionScope as ModelScope
+from app.models.material import Material, MaterialParseStatus
+from app.models.user import User
+from app.repositories.knowledge_repository import KnowledgeRepository
+from app.repositories.material_repository import MaterialRepository
+from app.repositories.study_target_repository import StudyTargetRepository
+from app.schemas.knowledge import (
+    KnowledgeExtractRequest,
+    KnowledgeExtractionScope,
+    KnowledgeExtractResponse,
+)
+from app.schemas.knowledge_graph import KnowledgeGraphGenerateRequest, KnowledgeGraphResponse
 from app.services import ai_service
+from app.services.knowledge_graph_service import KnowledgeGraphService
 
 
-def _build_mock_material_text(material_id: int) -> str:
-    """Return temporary material text before member A's material module is ready.
+def _normalize_string_list(value: object) -> list[str]:
+    """Normalize AI-returned list-like fields to list[str]."""
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
-    The final implementation should delete this helper and read parsed_text from
-    the materials/document-content table. Keeping the mock here, instead of in
-    the router, preserves the layer boundary: the router does HTTP work, while
-    the service decides how to obtain business data.
-    """
-    return (
-        f"资料 {material_id} 的示例解析文本。"
-        "需求分析用于明确系统边界、用户角色、功能范围和验收标准。"
-        "数据流图用于描述输入、处理过程、数据存储和输出之间的关系。"
-        "AI知识提炼可以帮助学生从长篇资料中快速获得摘要、大纲、关键词、重点知识点和可能考点。"
+
+def _to_response(
+    row: KnowledgeExtraction,
+    *,
+    knowledge_graph: KnowledgeGraphResponse | None = None,
+) -> KnowledgeExtractResponse:
+    """Map a stored extraction row to the public response schema."""
+    return KnowledgeExtractResponse(
+        extraction_id=row.id,
+        scope=KnowledgeExtractionScope(row.scope.value),
+        material_id=row.material_id,
+        target_id=row.target_id,
+        summary=row.summary,
+        outline=[str(item) for item in row.outline],
+        keywords=[str(item) for item in row.keywords],
+        key_points=[str(item) for item in row.key_points],
+        exam_points=[str(item) for item in row.exam_points],
+        knowledge_graph=knowledge_graph,
     )
 
 
-def _build_target_name(target_id: int | None) -> str | None:
-    """Return temporary target name before target repository integration.
+def _materials_text_for_target(materials: list[Material]) -> str:
+    """Build target-level extraction text from all parsed materials."""
+    chunks: list[str] = []
+    for material in materials:
+        parsed_text = (material.parsed_text or "").strip()
+        if not parsed_text:
+            continue
+        chunks.append(
+            f"资料ID {material.id}，文件名：{material.original_filename}\n{parsed_text}"
+        )
+    return "\n\n".join(chunks)
 
-    Later this should query member A's study target module and use the real
-    course/exam target name.
-    """
-    if target_id is None:
-        return None
-    return f"复习目标 {target_id}"
+
+async def extract_material_knowledge(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    material: Material,
+) -> KnowledgeExtractResponse:
+    """Generate and save material-level extraction for one parsed material."""
+    if material.user_id != current_user.id:
+        raise ValueError("资料不存在")
+    if material.parse_status != MaterialParseStatus.parsed or not material.parsed_text:
+        raise ValueError("资料未解析完成")
+
+    generated = ai_service.generate_knowledge(
+        material.parsed_text,
+        target_name=material.original_filename,
+    )
+    row = await KnowledgeRepository.save_extraction(
+        db,
+        user_id=current_user.id,
+        scope=ModelScope.material,
+        target_id=material.target_id,
+        material_id=material.id,
+        summary=str(generated["summary"]),
+        outline=_normalize_string_list(generated["outline"]),
+        keywords=_normalize_string_list(generated["keywords"]),
+        key_points=_normalize_string_list(generated["key_points"]),
+        exam_points=_normalize_string_list(generated["exam_points"]),
+    )
+    return _to_response(row)
 
 
-def extract_knowledge(
+async def extract_target_knowledge(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    target_id: int,
+    force_regenerate: bool,
+) -> KnowledgeExtractResponse:
+    """Generate/save target-level extraction and refresh target knowledge graph."""
+    target = await StudyTargetRepository.get_by_id(
+        db,
+        target_id=target_id,
+        user_id=current_user.id,
+    )
+    if target is None:
+        raise ValueError("课程/考试目标不存在")
+
+    if not force_regenerate:
+        existing = await KnowledgeRepository.get_latest(
+            db,
+            user_id=current_user.id,
+            scope=ModelScope.target,
+            target_id=target_id,
+        )
+        if existing is not None:
+            graph = await KnowledgeGraphService.get_graph(
+                db,
+                current_user=current_user,
+                target_id=target_id,
+            )
+            return _to_response(existing, knowledge_graph=graph)
+
+    materials = await MaterialRepository.list_parsed_by_target(
+        db,
+        user_id=current_user.id,
+        target_id=target_id,
+    )
+    if not materials:
+        raise ValueError("该目标下暂无已解析资料，无法进行知识提炼")
+
+    source_text = _materials_text_for_target(materials)
+    if not source_text:
+        raise ValueError("该目标下已解析资料没有可用于知识提炼的文本")
+
+    generated = ai_service.generate_knowledge(
+        source_text,
+        target_name=target.title,
+    )
+    row = await KnowledgeRepository.save_extraction(
+        db,
+        user_id=current_user.id,
+        scope=ModelScope.target,
+        target_id=target_id,
+        material_id=None,
+        summary=str(generated["summary"]),
+        outline=_normalize_string_list(generated["outline"]),
+        keywords=_normalize_string_list(generated["keywords"]),
+        key_points=_normalize_string_list(generated["key_points"]),
+        exam_points=_normalize_string_list(generated["exam_points"]),
+    )
+    graph = await KnowledgeGraphService.generate(
+        db,
+        current_user=current_user,
+        payload=KnowledgeGraphGenerateRequest(
+            target_id=target_id,
+            force_regenerate=True,
+        ),
+    )
+    return _to_response(row, knowledge_graph=graph)
+
+
+async def extract_knowledge(
+    db: AsyncSession,
     payload: KnowledgeExtractRequest,
     *,
-    parsed_text: str | None = None,
-    target_name: str | None = None,
+    current_user: User,
 ) -> KnowledgeExtractResponse:
-    """Coordinate material loading, AI extraction, and result persistence.
+    """Run material-level or target-level extraction from one public endpoint."""
+    if payload.material_id is not None:
+        material = await MaterialRepository.get_by_id(
+            db,
+            material_id=payload.material_id,
+            user_id=current_user.id,
+        )
+        if material is None:
+            raise ValueError("资料不存在")
+        return await extract_material_knowledge(
+            db,
+            current_user=current_user,
+            material=material,
+        )
 
-    Expected final workflow:
-    1. Receive KnowledgeExtractRequest from the router.
-    2. Load parsed material text by payload.material_id.
-    3. Call ai_service.generate_knowledge(parsed_text).
-    4. Save the generated result through knowledge_repository.
-    5. Return KnowledgeExtractResponse to the router.
+    if payload.target_id is None:
+        raise ValueError("material_id 或 target_id 至少需要提供一个")
 
-    Current implementation:
-    - Uses parsed_text if the caller passes it in.
-    - Otherwise uses temporary mock material text so the flow can run before
-      member A's material repository is finished.
-    - Calls ai_service.generate_knowledge().
-    - Does not save to the database yet.
+    return await extract_target_knowledge(
+        db,
+        current_user=current_user,
+        target_id=payload.target_id,
+        force_regenerate=payload.force_regenerate,
+    )
+
+
+async def run_after_material_parsed(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    material: Material,
+) -> None:
+    """Automatic pipeline after one material is parsed successfully.
+
+    First version runs synchronously inside the parse request so it needs no
+    extra infrastructure. Later it can be moved to a background queue without
+    changing the orchestration boundary.
     """
-    # TODO: Add db session and user_id parameters when persistence is connected.
-    # TODO: Load material by material_id through A module/repository.
-    # TODO: Ensure material.parse_status is parsed if this check moves from router.
-    # TODO: Read material.parsed_text as the AI input.
-    # TODO: Call ai_service.generate_knowledge(parsed_text).
-    # TODO: Save or update the extraction result through knowledge_repository.
-    # TODO: Return KnowledgeExtractResponse.
-    material_text = parsed_text or _build_mock_material_text(payload.material_id)
-    resolved_target_name = target_name or _build_target_name(payload.target_id)
-    generated = ai_service.generate_knowledge(
-        material_text,
-        target_name=resolved_target_name,
-    )
+    if material.parse_status != MaterialParseStatus.parsed or not material.parsed_text:
+        return
 
-    return KnowledgeExtractResponse(
-        material_id=payload.material_id,
-        summary=str(generated["summary"]),
-        outline=list(generated["outline"]),
-        keywords=list(generated["keywords"]),
-        key_points=list(generated["key_points"]),
-        exam_points=list(generated["exam_points"]),
-    )
+    try:
+        await extract_material_knowledge(
+            db,
+            current_user=current_user,
+            material=material,
+        )
+        await extract_target_knowledge(
+            db,
+            current_user=current_user,
+            target_id=material.target_id,
+            force_regenerate=True,
+        )
+    except Exception:
+        await db.rollback()
+        # Parsing has already succeeded. Knowledge extraction failures should
+        # not turn a parsed material back into failed; manual /knowledge/extract
+        # can be used to retry.
+        return

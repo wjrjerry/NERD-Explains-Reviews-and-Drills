@@ -11,7 +11,11 @@ from app.schemas.wrong_question import (
 )
 
 
-def _to_response(row: WrongQuestion) -> WrongQuestionResponse:
+def _to_response(
+    row: WrongQuestion,
+    *,
+    knowledge_point_ids: list[int] | None = None,
+) -> WrongQuestionResponse:
     """Map a WrongQuestion ORM row to the public response schema."""
     return WrongQuestionResponse(
         id=row.id,
@@ -24,6 +28,7 @@ def _to_response(row: WrongQuestion) -> WrongQuestionResponse:
         analysis=row.analysis,
         wrong_reason=row.wrong_reason,
         knowledge_points=[str(point) for point in row.knowledge_points],
+        knowledge_point_ids=knowledge_point_ids or [],
         mastery_status=MasteryStatus(row.mastery_status.value),
     )
 
@@ -42,7 +47,13 @@ async def create_wrong_questions(
         test_record_id=test_record_id,
         wrong_items=wrong_items,
     )
-    return [_to_response(row) for row in rows]
+    link_map = await WrongQuestionRepository.list_knowledge_point_ids_by_wrong_question_ids(
+        db,
+        wrong_question_ids=[row.id for row in rows],
+    )
+    return [
+        _to_response(row, knowledge_point_ids=link_map.get(row.id, [])) for row in rows
+    ]
 
 
 async def list_wrong_questions(
@@ -51,6 +62,7 @@ async def list_wrong_questions(
     user_id: int,
     target_id: int | None,
     material_id: int | None,
+    knowledge_point_id: int | None,
     mastery_status: MasteryStatus | None,
     page: int,
     page_size: int,
@@ -61,6 +73,7 @@ async def list_wrong_questions(
         user_id=user_id,
         target_id=target_id,
         material_id=material_id,
+        knowledge_point_id=knowledge_point_id,
         mastery_status=(
             ModelMasteryStatus(mastery_status.value)
             if mastery_status is not None
@@ -69,7 +82,13 @@ async def list_wrong_questions(
         page=page,
         page_size=page_size,
     )
-    return [_to_response(row) for row in rows], total
+    link_map = await WrongQuestionRepository.list_knowledge_point_ids_by_wrong_question_ids(
+        db,
+        wrong_question_ids=[row.id for row in rows],
+    )
+    return [
+        _to_response(row, knowledge_point_ids=link_map.get(row.id, [])) for row in rows
+    ], total
 
 
 async def get_wrong_question(
@@ -86,7 +105,11 @@ async def get_wrong_question(
     )
     if row is None:
         return None
-    return _to_response(row)
+    link_map = await WrongQuestionRepository.list_knowledge_point_ids_by_wrong_question_ids(
+        db,
+        wrong_question_ids=[row.id],
+    )
+    return _to_response(row, knowledge_point_ids=link_map.get(row.id, []))
 
 
 async def update_wrong_question_mastery(
@@ -105,4 +128,8 @@ async def update_wrong_question_mastery(
     )
     if row is None:
         return None
-    return _to_response(row)
+    link_map = await WrongQuestionRepository.list_knowledge_point_ids_by_wrong_question_ids(
+        db,
+        wrong_question_ids=[row.id],
+    )
+    return _to_response(row, knowledge_point_ids=link_map.get(row.id, []))

@@ -48,6 +48,11 @@ class ReviewPlanRepository:
                     if task.get("wrong_question_id") is not None
                     else None
                 ),
+                knowledge_point_id=(
+                    int(task["knowledge_point_id"])
+                    if task.get("knowledge_point_id") is not None
+                    else None
+                ),
             )
             for task in tasks
         ]
@@ -89,3 +94,21 @@ class ReviewPlanRepository:
             .limit(page_size)
         )
         return list(result.scalars().all()), total
+
+    @staticmethod
+    async def get_by_id(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        plan_id: int,
+    ) -> ReviewPlan | None:
+        """Fetch one review plan with tasks if it belongs to the user."""
+        result = await db.execute(
+            select(ReviewPlan)
+            .options(selectinload(ReviewPlan.tasks))
+            .where(
+                ReviewPlan.id == plan_id,
+                ReviewPlan.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()

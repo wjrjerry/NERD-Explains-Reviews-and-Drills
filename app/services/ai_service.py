@@ -352,6 +352,73 @@ def _normalize_generated_question(
     }
 
 
+def _infer_knowledge_point_ids_from_text(
+    *,
+    text: str,
+    candidate_points: list[dict[str, object]],
+    max_points: int = 3,
+) -> list[int]:
+    """Infer relevant knowledge point IDs from text and candidate point metadata."""
+    normalized_text = _normalize_text(text)
+    scored: list[tuple[float, int]] = []
+    for point in candidate_points:
+        try:
+            point_id = int(point.get("id"))
+        except (TypeError, ValueError):
+            continue
+        name = str(point.get("name", "")).strip()
+        description = str(point.get("description", "") or "").strip()
+        try:
+            importance = float(point.get("importance_weight", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            importance = 0.0
+
+        score = importance * 0.2
+        if name and name in normalized_text:
+            score += 2.0
+        for token in _extract_mock_keywords(f"{name} {description}")[:5]:
+            if token and token in normalized_text:
+                score += 0.4
+        if score > 0:
+            scored.append((score, point_id))
+
+    scored.sort(reverse=True)
+    return [point_id for _, point_id in scored[:max_points]]
+
+
+def infer_question_knowledge_points(
+    question: dict[str, object],
+    candidate_points: list[dict[str, object]],
+) -> list[int]:
+    """Infer graph knowledge points covered by one generated question."""
+    text = " ".join(
+        [
+            str(question.get("stem", "")),
+            str(question.get("analysis", "")),
+            " ".join(str(item) for item in question.get("knowledge_points", []) if item),
+        ]
+    )
+    return _infer_knowledge_point_ids_from_text(
+        text=text,
+        candidate_points=candidate_points,
+        max_points=3,
+    )
+
+
+def infer_qa_knowledge_points(
+    *,
+    question: str,
+    answer: str,
+    candidate_points: list[dict[str, object]],
+) -> list[int]:
+    """Infer graph knowledge points involved in one QA interaction."""
+    return _infer_knowledge_point_ids_from_text(
+        text=f"{question}\n{answer}",
+        candidate_points=candidate_points,
+        max_points=3,
+    )
+
+
 def _single_choice_question(
     *,
     question_id: int,
@@ -493,20 +560,32 @@ def generate_questions(
     question_types: list[str],
     difficulty: str,
     count: int,
+    target_title: str | None = None,
+    extra_requirement: str | None = None,
+    knowledge_points: list[dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
     """Call or mock AI to generate objective and subjective questions."""
     requested_types = question_types or ["single_choice"]
+    focus_points = knowledge_points or []
     if settings.ai_provider != "mock":
         return _generate_questions_with_real_ai(
             parsed_text=parsed_text,
             question_types=requested_types,
             difficulty=difficulty,
             count=count,
+            target_title=target_title,
+            extra_requirement=extra_requirement,
+            knowledge_points=focus_points,
         )
 
     text = _normalize_text(parsed_text)
     sentences = _split_sentences(text)
-    keywords = _extract_mock_keywords(text)
+    focused_names = [
+        str(point.get("name", "")).strip()
+        for point in focus_points
+        if str(point.get("name", "")).strip()
+    ]
+    keywords = focused_names or _extract_mock_keywords(text)
     questions: list[dict[str, object]] = []
 
     for index in range(count):
@@ -551,9 +630,24 @@ def _generate_questions_with_real_ai(
     question_types: list[str],
     difficulty: str,
     count: int,
+    target_title: str | None = None,
+    extra_requirement: str | None = None,
+    knowledge_points: list[dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
     """Ask the configured real LLM to generate structured questions."""
     allowed_types = ", ".join(question_types)
+    focus_points = knowledge_points or []
+    focus_lines = []
+    for point in focus_points:
+        point_id = str(point.get("id", "")).strip()
+        name = str(point.get("name", "")).strip()
+        description = str(point.get("description", "") or "").strip()
+        weight = str(point.get("importance_weight", "")).strip()
+        if name:
+            focus_lines.append(
+                f"- id={point_id}; name={name}; importance={weight}; description={description}"
+            )
+
     system_prompt = (
         "你是一个软件工程备考出题助手。请只根据用户提供的资料出题。"
         "必须返回严格 JSON 数组，不要返回 Markdown、解释文字或代码块。"
@@ -563,8 +657,13 @@ def _generate_questions_with_real_ai(
         "主观题的 options 必须为空数组。"
     )
     user_prompt = (
+        f"复习目标：{target_title or '未指定'}\n\n"
+        "优先覆盖的知识点：\n"
+        f"{chr(10).join(focus_lines) if focus_lines else '未指定，请从资料中自动提取。'}\n\n"
         "资料：\n"
         f"{_normalize_text(parsed_text)[:6000]}\n\n"
+        "用户补充出题要求：\n"
+        f"{_normalize_text(extra_requirement or '') or '无'}\n\n"
         "出题要求：\n"
         f"- 题目数量：{count}\n"
         f"- 允许题型：{allowed_types}\n"
@@ -577,7 +676,8 @@ def _generate_questions_with_real_ai(
         "- 主观题 correct_answer 必须是参考答案或评分要点字符串数组。\n"
         "- 客观题每个选项的 analysis 必须说明该选项为什么正确或错误。\n"
         "- 题目级 analysis 需要综合说明正确答案依据。\n"
-        "- knowledge_points 是字符串数组。\n\n"
+        "- knowledge_points 是字符串数组，必须优先使用上方知识点名称。\n"
+        "- 如果给定了优先覆盖的知识点，不要生成与这些知识点无关的题目。\n\n"
         "返回示例格式：\n"
         "[{\"type\":\"single_choice\",\"stem\":\"...\","
         "\"options\":[{\"key\":\"A\",\"text\":\"...\",\"analysis\":\"该项正确，因为...\"}],"
@@ -761,6 +861,167 @@ def score_subjective_answer(
     }
 
 
+def _normalize_graph_item(raw: object, *, index: int) -> dict[str, object]:
+    """Validate and normalize one AI-generated knowledge graph item."""
+    if not isinstance(raw, dict):
+        raise llm_service.LlmServiceError("Knowledge graph point must be an object.")
+
+    name = str(raw.get("name", "")).strip()
+    if not name:
+        raise llm_service.LlmServiceError("Knowledge graph point name is empty.")
+
+    try:
+        importance_weight = float(raw.get("importance_weight", 0.5))
+    except (TypeError, ValueError) as exc:
+        raise llm_service.LlmServiceError(
+            "Knowledge graph importance_weight must be a number."
+        ) from exc
+
+    evidence = raw.get("evidence", [])
+    if not isinstance(evidence, list):
+        evidence = []
+
+    normalized_evidence: list[dict[str, object]] = []
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        normalized_evidence.append(
+            {
+                "material_id": item.get("material_id"),
+                "snippet": str(item.get("snippet", "") or "").strip(),
+                "relevance_score": item.get("relevance_score", 1.0),
+            }
+        )
+
+    try:
+        level = int(raw.get("level", 1) or 1)
+        sort_order = int(raw.get("sort_order", index + 1) or index + 1)
+    except (TypeError, ValueError) as exc:
+        raise llm_service.LlmServiceError(
+            "Knowledge graph level/sort_order must be integers."
+        ) from exc
+
+    return {
+        "name": name,
+        "description": str(raw.get("description", "") or "").strip(),
+        "importance_weight": min(max(importance_weight, 0.0), 1.0),
+        "parent_name": str(raw.get("parent_name", "") or "").strip() or None,
+        "level": level,
+        "sort_order": sort_order,
+        "evidence": normalized_evidence,
+    }
+
+
+def generate_knowledge_graph(
+    *,
+    target_title: str,
+    subject: str | None,
+    materials: list[dict[str, object]],
+    max_points: int,
+) -> dict[str, list[dict[str, object]]]:
+    """Generate a target-level knowledge graph from parsed materials."""
+    if settings.ai_provider != "mock":
+        return _generate_knowledge_graph_with_real_ai(
+            target_title=target_title,
+            subject=subject,
+            materials=materials,
+            max_points=max_points,
+        )
+
+    joined_text = _normalize_text(
+        " ".join(str(material.get("parsed_text", "")) for material in materials)
+    )
+    keywords = _extract_mock_keywords(joined_text)[:max_points]
+    if not keywords:
+        keywords = [target_title or subject or "复习重点"]
+
+    points: list[dict[str, object]] = []
+    for index, keyword in enumerate(keywords):
+        material = materials[index % len(materials)]
+        material_id = int(material["material_id"])
+        snippet = _select_reference_snippet(
+            str(material.get("parsed_text", "")),
+            keyword,
+        )
+        points.append(
+            {
+                "name": keyword,
+                "description": f"围绕「{keyword}」整理定义、应用场景和常见考法。",
+                "importance_weight": max(0.35, 1.0 - index * 0.08),
+                "parent_name": None,
+                "level": 1,
+                "sort_order": index + 1,
+                "evidence": [
+                    {
+                        "material_id": material_id,
+                        "snippet": snippet or str(material.get("parsed_text", ""))[:120],
+                        "relevance_score": 1.0,
+                    }
+                ],
+            }
+        )
+
+    return {"points": points}
+
+
+def _generate_knowledge_graph_with_real_ai(
+    *,
+    target_title: str,
+    subject: str | None,
+    materials: list[dict[str, object]],
+    max_points: int,
+) -> dict[str, list[dict[str, object]]]:
+    """Ask the configured real LLM to build a target-level knowledge graph."""
+    material_blocks = []
+    for material in materials:
+        material_blocks.append(
+            {
+                "material_id": material.get("material_id"),
+                "title": material.get("title"),
+                "parsed_text": _normalize_text(str(material.get("parsed_text", "")))[:2500],
+            }
+        )
+
+    system_prompt = (
+        "你是一个备考知识图谱构建助手。请根据多份课程资料，抽取目标级知识点。"
+        "必须返回严格 JSON 对象，不要返回 Markdown、解释文字或代码块。"
+    )
+    user_prompt = (
+        "学习目标：\n"
+        f"- 标题：{target_title}\n"
+        f"- 科目：{subject or '未提供'}\n\n"
+        "资料列表 JSON：\n"
+        f"{json.dumps(material_blocks, ensure_ascii=False)}\n\n"
+        "请生成知识点图谱，最多 "
+        f"{max_points} 个节点。返回 JSON 对象，字段为 points。"
+        "points 是数组，每个元素包含：\n"
+        "- name: 知识点名称。\n"
+        "- description: 简短说明。\n"
+        "- importance_weight: 0 到 1 的重要程度。\n"
+        "- parent_name: 父知识点名称，没有则为 null。\n"
+        "- level: 层级，一级知识点为 1。\n"
+        "- sort_order: 排序，从 1 开始。\n"
+        "- evidence: 数组，每个元素包含 material_id, snippet, relevance_score。\n"
+        "evidence 的 material_id 必须来自资料列表，snippet 必须来自资料内容。"
+    )
+    content = llm_service.chat_completion(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        task="knowledge_graph_generation",
+    )
+    data = _extract_json_object(content)
+    raw_points = data.get("points")
+    if not isinstance(raw_points, list) or not raw_points:
+        raise llm_service.LlmServiceError("LLM knowledge graph points must be a non-empty list.")
+
+    return {
+        "points": [
+            _normalize_graph_item(item, index=index)
+            for index, item in enumerate(raw_points[:max_points])
+        ]
+    }
+
+
 def generate_review_plan(
     *,
     target_title: str,
@@ -788,19 +1049,19 @@ def generate_review_plan(
         f"- 开始日期：{start_date}\n"
         f"- 结束日期：{end_date}\n"
         f"- 必须覆盖这些日期：{', '.join(dates)}\n\n"
-        "薄弱点和可关联资源：\n"
+        "薄弱知识点、掌握度和可关联资源：\n"
         f"{json.dumps(focus_items, ensure_ascii=False)}\n\n"
         "返回 JSON 对象，字段包括：\n"
         "- title: 计划标题。\n"
         "- summary: 计划依据摘要，说明如何根据错题/薄弱点安排。\n"
         "- tasks: 数组，长度必须等于日期数量，每个日期必须有且只有一个任务。\n"
-        "每个 task 包含 date, title, content, material_id, wrong_question_id。\n"
-        "material_id 和 wrong_question_id 只能使用薄弱点列表中已有的值，没有则为 null。\n"
+        "每个 task 包含 date, title, content, knowledge_point_id, material_id, wrong_question_id。\n"
+        "knowledge_point_id、material_id 和 wrong_question_id 只能使用薄弱点列表中已有的值，没有则为 null。\n"
         "content 要具体说明当天怎么复习、看什么、做什么检查。\n"
         "返回示例："
         "{\"title\":\"...\",\"summary\":\"...\",\"tasks\":["
         "{\"date\":\"2026-06-12\",\"title\":\"复习需求分析\","
-        "\"content\":\"...\",\"material_id\":2,\"wrong_question_id\":1}]}"
+        "\"content\":\"...\",\"knowledge_point_id\":3,\"material_id\":2,\"wrong_question_id\":1}]}"
     )
     content = llm_service.chat_completion(
         system_prompt=system_prompt,

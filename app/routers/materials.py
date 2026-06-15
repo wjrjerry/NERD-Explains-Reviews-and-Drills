@@ -5,8 +5,16 @@ from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
 from app.schemas.material import MaterialDetailResponse, MaterialPreviewResponse, MaterialResponse
+from app.schemas.material_structure import (
+    MaterialChunksResponse,
+    MaterialChunkResponse,
+    MaterialSectionsResponse,
+    MaterialSectionResponse,
+    MaterialStructuredResponse,
+)
 from app.schemas.response import ApiResponse, PageResult
 from app.services.material_service import MaterialService
+from app.services.material_structure_service import MaterialStructureService
 from app.services.parser_service import ParserService
 from app.utils.responses import fail, page_result, success
 
@@ -127,6 +135,86 @@ async def preview_material(
             material=MaterialResponse.model_validate(material),
             preview_text=preview_text,
             message=message,
+        )
+    )
+
+
+@router.get("/{material_id}/sections", response_model=ApiResponse[MaterialSectionsResponse])
+async def list_material_sections(
+    material_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询资料章节结构。"""
+    try:
+        sections = await MaterialStructureService.list_sections(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+    except ValueError as exc:
+        return fail(code=40402, message=str(exc))
+
+    return success(
+        data=MaterialSectionsResponse(
+            material_id=material_id,
+            sections=[MaterialSectionResponse.model_validate(section) for section in sections],
+        )
+    )
+
+
+@router.get("/{material_id}/chunks", response_model=ApiResponse[MaterialChunksResponse])
+async def list_material_chunks(
+    material_id: int,
+    section_id: int | None = Query(default=None, description="按章节 ID 筛选"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询资料文本 chunks，供知识提炼、问答、出题和知识图谱消费。"""
+    try:
+        chunks = await MaterialStructureService.list_chunks(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+            section_id=section_id,
+        )
+    except ValueError as exc:
+        return fail(code=40402, message=str(exc))
+
+    return success(
+        data=MaterialChunksResponse(
+            material_id=material_id,
+            chunks=[MaterialChunkResponse.model_validate(chunk) for chunk in chunks],
+        )
+    )
+
+
+@router.get("/{material_id}/structured", response_model=ApiResponse[MaterialStructuredResponse])
+async def get_material_structured(
+    material_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """一次性查询资料章节和 chunks。"""
+    try:
+        sections = await MaterialStructureService.list_sections(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+        chunks = await MaterialStructureService.list_chunks(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+    except ValueError as exc:
+        return fail(code=40402, message=str(exc))
+
+    return success(
+        data=MaterialStructuredResponse(
+            material_id=material_id,
+            sections=[MaterialSectionResponse.model_validate(section) for section in sections],
+            chunks=[MaterialChunkResponse.model_validate(chunk) for chunk in chunks],
         )
     )
 

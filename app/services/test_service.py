@@ -6,12 +6,19 @@ from app.models.question import Question
 from app.repositories.question_repository import QuestionRepository
 from app.repositories.test_record_repository import TestRecordRepository
 from app.schemas.test_record import (
+    KnowledgePointTestSummary,
     TestAnswerItem,
     TestResultItem,
     TestSubmitRequest,
     TestSubmitResponse,
 )
-from app.services import ai_service, wrong_question_service
+from app.services import (
+    ai_service,
+    ai_usage_service,
+    knowledge_mastery_service,
+    wrong_question_service,
+)
+from app.services.knowledge_mastery_service import KnowledgeMasteryAnswerOutcome
 
 
 OBJECTIVE_QUESTION_TYPES = {"single_choice", "multiple_choice", "true_false"}
@@ -115,6 +122,45 @@ def _score_subjective_answer(
     )
 
 
+def _build_knowledge_point_summary(
+    results: list[TestResultItem],
+) -> list[KnowledgePointTestSummary]:
+    """Aggregate this submission's result by linked knowledge point."""
+    stats: dict[int, dict[str, float | int]] = {}
+    for result in results:
+        for point_id in result.knowledge_point_ids:
+            item = stats.setdefault(
+                point_id,
+                {
+                    "total_count": 0,
+                    "correct_count": 0,
+                    "score_sum": 0.0,
+                },
+            )
+            item["total_count"] = int(item["total_count"]) + 1
+            item["correct_count"] = int(item["correct_count"]) + (1 if result.is_correct else 0)
+            item["score_sum"] = float(item["score_sum"]) + float(result.score)
+
+    summaries: list[KnowledgePointTestSummary] = []
+    for point_id, item in sorted(stats.items()):
+        total_count = int(item["total_count"])
+        correct_count = int(item["correct_count"])
+        wrong_count = total_count - correct_count
+        summaries.append(
+            KnowledgePointTestSummary(
+                knowledge_point_id=point_id,
+                total_count=total_count,
+                correct_count=correct_count,
+                wrong_count=wrong_count,
+                accuracy=round(correct_count / total_count, 4) if total_count else 0.0,
+                average_score=round(float(item["score_sum"]) / total_count, 4)
+                if total_count
+                else 0.0,
+            )
+        )
+    return summaries
+
+
 async def submit_test(
     db: AsyncSession,
     payload: TestSubmitRequest,
@@ -160,45 +206,70 @@ async def submit_test(
             f"questions do not belong to material {payload.material_id}: {invalid_material_ids}"
         )
 
+    question_point_ids = await QuestionRepository.list_knowledge_point_ids_by_question_ids(
+        db,
+        question_ids=question_ids,
+    )
     results: list[TestResultItem] = []
     answer_details: list[dict[str, object]] = []
     wrong_items: list[dict[str, object]] = []
+    mastery_outcomes: list[KnowledgeMasteryAnswerOutcome] = []
     correct_count = 0
 
     for submitted in payload.answers:
         question = questions_by_id[submitted.question_id]
+        linked_point_ids = question_point_ids.get(question.id, [])
         user_answer = _extract_submitted_answer(submitted, question)
         if question.question_type.value in OBJECTIVE_QUESTION_TYPES:
             correct_answer = _normalize_answer(question.correct_answer)
-            (
-                item_score,
-                is_correct,
-                item_analysis,
-                wrong_reason,
-                matched_points,
-                missing_points,
-                misconceptions,
-            ) = _score_objective_answer(question, user_answer)
+            ai_usage_service.clear_pending_traces()
+            try:
+                (
+                    item_score,
+                    is_correct,
+                    item_analysis,
+                    wrong_reason,
+                    matched_points,
+                    missing_points,
+                    misconceptions,
+                ) = _score_objective_answer(question, user_answer)
+            finally:
+                await ai_usage_service.record_pending_traces(
+                    db,
+                    user_id=user_id,
+                    target_id=payload.target_id or question.target_id,
+                    material_id=payload.material_id,
+                )
         else:
             correct_answer = [
                 str(answer).strip()
                 for answer in question.correct_answer
                 if str(answer).strip()
             ]
-            (
-                item_score,
-                is_correct,
-                item_analysis,
-                wrong_reason,
-                matched_points,
-                missing_points,
-                misconceptions,
-            ) = _score_subjective_answer(question, user_answer)
+            ai_usage_service.clear_pending_traces()
+            try:
+                (
+                    item_score,
+                    is_correct,
+                    item_analysis,
+                    wrong_reason,
+                    matched_points,
+                    missing_points,
+                    misconceptions,
+                ) = _score_subjective_answer(question, user_answer)
+            finally:
+                await ai_usage_service.record_pending_traces(
+                    db,
+                    user_id=user_id,
+                    target_id=payload.target_id or question.target_id,
+                    material_id=payload.material_id,
+                )
         if is_correct:
             correct_count += 1
 
         result = TestResultItem(
             question_id=question.id,
+            knowledge_point_ids=linked_point_ids,
             user_answer=user_answer,
             correct_answer=correct_answer,
             is_correct=is_correct,
@@ -210,6 +281,16 @@ async def submit_test(
         )
         results.append(result)
         answer_details.append(result.model_dump())
+        target_id = payload.target_id or question.target_id
+        if target_id is not None and linked_point_ids:
+            mastery_outcomes.append(
+                KnowledgeMasteryAnswerOutcome(
+                    target_id=target_id,
+                    knowledge_point_ids=linked_point_ids,
+                    is_correct=is_correct,
+                    score=item_score,
+                )
+            )
         if not is_correct:
             wrong_items.append(
                 {
@@ -225,6 +306,7 @@ async def submit_test(
                     "knowledge_points": [
                         str(point) for point in question.knowledge_points
                     ],
+                    "knowledge_point_ids": linked_point_ids,
                 }
             )
 
@@ -254,6 +336,11 @@ async def submit_test(
         test_record_id=record.id,
         wrong_items=wrong_items,
     )
+    await knowledge_mastery_service.update_mastery_after_test(
+        db,
+        user_id=user_id,
+        outcomes=mastery_outcomes,
+    )
 
     return TestSubmitResponse(
         test_record_id=record.id,
@@ -263,4 +350,5 @@ async def submit_test(
         correct_count=record.correct_count,
         wrong_count=record.wrong_count,
         results=results,
+        knowledge_point_summary=_build_knowledge_point_summary(results),
     )

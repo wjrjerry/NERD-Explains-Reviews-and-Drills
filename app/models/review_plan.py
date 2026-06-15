@@ -113,6 +113,12 @@ class ReviewPlanTask(Base):
         nullable=True,
         comment="关联错题ID，可为空",
     )
+    knowledge_point_id: Mapped[int | None] = mapped_column(
+        ForeignKey("knowledge_points.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment="关联知识点ID，可为空",
+    )
     completed: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

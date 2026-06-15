@@ -32,6 +32,9 @@ async def test_engine(tmp_path_factory) -> AsyncGenerator:
     import app.models.user
     import app.models.study_target
     import app.models.material
+    import app.models.material_structure
+    import app.models.parse_task
+    import app.models.admin_log
     import app.models.knowledge
     import app.models.question
     import app.models.test_record

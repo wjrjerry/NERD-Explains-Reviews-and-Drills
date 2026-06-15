@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.review_plan import ReviewPlan
 from app.models.study_target import StudyTarget
+from app.models.knowledge_point import MasteryStatus as KnowledgeMasteryStatus
 from app.models.wrong_question import MasteryStatus
+from app.repositories.knowledge_graph_repository import KnowledgeGraphRepository
 from app.repositories.review_plan_repository import ReviewPlanRepository
 from app.repositories.study_target_repository import StudyTargetRepository
 from app.repositories.wrong_question_repository import WrongQuestionRepository
@@ -17,7 +19,7 @@ from app.schemas.review_plan import (
     ReviewPlanResponse,
     ReviewPlanTask,
 )
-from app.services import ai_service
+from app.services import ai_service, ai_usage_service
 
 
 MAX_PLAN_DAYS = 60
@@ -61,6 +63,7 @@ def _to_response(plan: ReviewPlan) -> ReviewPlanResponse:
                 content=task.content,
                 material_id=task.material_id,
                 wrong_question_id=task.wrong_question_id,
+                knowledge_point_id=task.knowledge_point_id,
                 completed=task.completed,
             )
             for task in plan.tasks
@@ -99,6 +102,93 @@ def _build_focus_items(wrong_questions) -> list[dict[str, object]]:
     ]
 
 
+async def _build_knowledge_focus_items(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    target_id: int,
+    wrong_questions,
+) -> list[dict[str, object]]:
+    """Build prioritized focus items from graph mastery, wrongs, and evidence."""
+    points = await KnowledgeGraphRepository.list_points_by_target(
+        db,
+        user_id=user_id,
+        target_id=target_id,
+    )
+    if not points:
+        return _build_focus_items(wrong_questions)
+
+    mastery_map = await KnowledgeGraphRepository.list_mastery_by_point_ids(
+        db,
+        user_id=user_id,
+        point_ids=[point.id for point in points],
+    )
+    material_links = await KnowledgeGraphRepository.list_material_links_by_point_ids(
+        db,
+        point_ids=[point.id for point in points],
+    )
+    wrong_link_map = await WrongQuestionRepository.list_knowledge_point_ids_by_wrong_question_ids(
+        db,
+        wrong_question_ids=[wrong.id for wrong in wrong_questions],
+    )
+
+    first_wrong_by_point: dict[int, int] = {}
+    wrong_count_by_point: Counter[int] = Counter()
+    for wrong in wrong_questions:
+        for point_id in wrong_link_map.get(wrong.id, []):
+            wrong_count_by_point[point_id] += 2 if wrong.mastery_status == MasteryStatus.unmastered else 1
+            first_wrong_by_point.setdefault(point_id, wrong.id)
+
+    items: list[dict[str, object]] = []
+    for point in points:
+        mastery = mastery_map.get(point.id)
+        answered_count = mastery.answered_count if mastery else 0
+        wrong_count = mastery.wrong_count if mastery else 0
+        accuracy = mastery.accuracy if mastery else 0.0
+        status = mastery.mastery_status if mastery else KnowledgeMasteryStatus.unlearned
+        material_id = None
+        links = material_links.get(point.id, [])
+        if links:
+            material_id = links[0].material_id
+
+        weakness = 1.0 - accuracy
+        if status == KnowledgeMasteryStatus.weak:
+            weakness += 0.5
+        elif status == KnowledgeMasteryStatus.unlearned:
+            weakness += 0.35
+        weakness += min(wrong_count_by_point.get(point.id, 0) + wrong_count, 6) * 0.08
+        weight = round(weakness + point.importance_weight, 4)
+
+        items.append(
+            {
+                "knowledge_point_id": point.id,
+                "knowledge_point": point.name,
+                "weight": weight,
+                "mastery_status": status.value,
+                "accuracy": accuracy,
+                "answered_count": answered_count,
+                "wrong_count": wrong_count,
+                "next_review_at": (
+                    mastery.next_review_at.isoformat()
+                    if mastery and mastery.next_review_at
+                    else None
+                ),
+                "wrong_question_id": first_wrong_by_point.get(point.id),
+                "material_id": material_id,
+            }
+        )
+
+    return sorted(
+        items,
+        key=lambda item: (
+            float(item["weight"]),
+            int(item.get("wrong_count") or 0),
+            int(item.get("answered_count") or 0) == 0,
+        ),
+        reverse=True,
+    )
+
+
 def _build_tasks(
     *,
     target: StudyTarget,
@@ -114,6 +204,7 @@ def _build_tasks(
             {
                 "knowledge_point": subject,
                 "weight": 1,
+                "knowledge_point_id": None,
                 "wrong_question_id": None,
                 "material_id": None,
             }
@@ -142,6 +233,7 @@ def _build_tasks(
                 "date": task_date,
                 "title": title,
                 "content": content,
+                "knowledge_point_id": focus.get("knowledge_point_id"),
                 "material_id": focus.get("material_id"),
                 "wrong_question_id": focus.get("wrong_question_id"),
             }
@@ -179,6 +271,11 @@ def _normalize_ai_review_plan(
         for item in focus_items
         if item.get("wrong_question_id") is not None
     }
+    allowed_knowledge_point_ids = {
+        int(item["knowledge_point_id"])
+        for item in focus_items
+        if item.get("knowledge_point_id") is not None
+    }
     raw_tasks = raw_plan.get("tasks")
     if not isinstance(raw_tasks, list):
         return fallback_title, fallback_summary, fallback_tasks
@@ -193,6 +290,7 @@ def _normalize_ai_review_plan(
 
         material_id = _safe_int(raw_task.get("material_id"))
         wrong_question_id = _safe_int(raw_task.get("wrong_question_id"))
+        knowledge_point_id = _safe_int(raw_task.get("knowledge_point_id"))
         normalized_material_id = (
             material_id
             if material_id is not None and material_id in allowed_material_ids
@@ -204,6 +302,12 @@ def _normalize_ai_review_plan(
             and wrong_question_id in allowed_wrong_question_ids
             else None
         )
+        normalized_knowledge_point_id = (
+            knowledge_point_id
+            if knowledge_point_id is not None
+            and knowledge_point_id in allowed_knowledge_point_ids
+            else None
+        )
         title = str(raw_task.get("title", "")).strip()
         content = str(raw_task.get("content", "")).strip()
         if not title or not content:
@@ -213,6 +317,7 @@ def _normalize_ai_review_plan(
             "date": allowed_dates[raw_date],
             "title": title,
             "content": content,
+            "knowledge_point_id": normalized_knowledge_point_id,
             "material_id": normalized_material_id,
             "wrong_question_id": normalized_wrong_question_id,
         }
@@ -250,7 +355,12 @@ async def generate_review_plan(
         page=1,
         page_size=200,
     )
-    focus_items = _build_focus_items(wrong_questions)
+    focus_items = await _build_knowledge_focus_items(
+        db,
+        user_id=user_id,
+        target_id=target.id,
+        wrong_questions=wrong_questions,
+    )
     fallback_tasks = _build_tasks(target=target, dates=dates, focus_items=focus_items)
     weak_points = [str(item["knowledge_point"]) for item in focus_items[:5]]
     if weak_points:
@@ -263,16 +373,25 @@ async def generate_review_plan(
     summary = fallback_summary
     tasks = fallback_tasks
     if settings.ai_provider != "mock":
-        raw_plan = ai_service.generate_review_plan(
-            target_title=target.title,
-            subject=target.subject,
-            exam_date=target.exam_date.isoformat() if target.exam_date else None,
-            review_goal=target.review_goal,
-            start_date=start_date.isoformat(),
-            end_date=end_date.isoformat(),
-            dates=[item.isoformat() for item in dates],
-            focus_items=focus_items,
-        )
+        ai_usage_service.clear_pending_traces()
+        try:
+            raw_plan = ai_service.generate_review_plan(
+                target_title=target.title,
+                subject=target.subject,
+                exam_date=target.exam_date.isoformat() if target.exam_date else None,
+                review_goal=target.review_goal,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
+                dates=[item.isoformat() for item in dates],
+                focus_items=focus_items,
+            )
+        finally:
+            await ai_usage_service.record_pending_traces(
+                db,
+                user_id=user_id,
+                target_id=target.id,
+                material_id=None,
+            )
         title, summary, tasks = _normalize_ai_review_plan(
             raw_plan=raw_plan,
             dates=dates,

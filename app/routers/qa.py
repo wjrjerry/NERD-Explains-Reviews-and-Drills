@@ -17,6 +17,7 @@ router = APIRouter(prefix="/qa", tags=["qa"])
 @router.get("/history", response_model=ApiResponse[PageResult[QaHistoryItem]])
 async def list_qa_history(
     material_id: int | None = Query(default=None, description="按资料 ID 筛选"),
+    target_id: int | None = Query(default=None, description="按课程/考试目标 ID 筛选"),
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
     current_user: User = Depends(get_current_user),
@@ -27,6 +28,7 @@ async def list_qa_history(
         db,
         user_id=current_user.id,
         material_id=material_id,
+        target_id=target_id,
         page=page,
         page_size=page_size,
     )
@@ -55,33 +57,41 @@ async def ask_question(
     3. Reject the request if the material is not parsed.
     4. Call qa_service.ask_question() to generate an answer and save a QA record.
     """
-    material = await get_material_for_ai(
-        db,
-        user_id=current_user.id,
-        material_id=payload.material_id,
-    )
-    if material is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Material not found.",
+    parsed_text: str | None = None
+    if payload.material_id is not None and payload.target_id is None:
+        material = await get_material_for_ai(
+            db,
+            user_id=current_user.id,
+            material_id=payload.material_id,
         )
+        if material is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Material not found.",
+            )
 
-    if material.parse_status != "parsed":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Material is not parsed yet.",
-        )
+        if material.parse_status != "parsed":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Material is not parsed yet.",
+            )
+        parsed_text = material.parsed_text
 
     try:
         result = await qa_service.ask_question(
             db,
             payload,
             user_id=current_user.id,
-            parsed_text=material.parsed_text,
+            parsed_text=parsed_text,
         )
     except LlmServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
 

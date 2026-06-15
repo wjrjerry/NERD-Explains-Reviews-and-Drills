@@ -1,7 +1,8 @@
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.qa import QaRecord
+from app.models.knowledge_point import KnowledgePoint
+from app.models.qa import QaKnowledgePoint, QaRecord
 
 
 class QaRepository:
@@ -18,6 +19,8 @@ class QaRepository:
         *,
         user_id: int,
         material_id: int,
+        target_id: int | None = None,
+        knowledge_point_ids: list[int] | None = None,
         question: str,
         answer: str,
         references: list[dict[str, int | str]],
@@ -32,6 +35,7 @@ class QaRepository:
         record = QaRecord(
             user_id=user_id,
             material_id=material_id,
+            target_id=target_id,
             question=question,
             answer=answer,
             references=references,
@@ -40,6 +44,21 @@ class QaRepository:
         )
 
         db.add(record)
+        await db.flush()
+
+        point_ids = list(dict.fromkeys(knowledge_point_ids or []))
+        if point_ids:
+            db.add_all(
+                [
+                    QaKnowledgePoint(
+                        qa_record_id=record.id,
+                        knowledge_point_id=point_id,
+                        relevance_score=1.0,
+                    )
+                    for point_id in point_ids
+                ]
+            )
+
         await db.commit()
         await db.refresh(record)
 
@@ -52,6 +71,7 @@ class QaRepository:
         *,
         user_id: int,
         material_id: int | None = None,
+        target_id: int | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[QaRecord], int]:
@@ -63,6 +83,8 @@ class QaRepository:
         conditions = [QaRecord.user_id == user_id]
         if material_id is not None:
             conditions.append(QaRecord.material_id == material_id)
+        if target_id is not None:
+            conditions.append(QaRecord.target_id == target_id)
 
         total_result = await db.execute(
             select(func.count()).select_from(QaRecord).where(*conditions)
@@ -79,3 +101,24 @@ class QaRepository:
         )
 
         return list(items_result.scalars().all()), total
+
+    @staticmethod
+    async def list_knowledge_points_by_qa_ids(
+        db: AsyncSession,
+        *,
+        qa_record_ids: list[int],
+    ) -> dict[int, list[KnowledgePoint]]:
+        """Return linked knowledge points keyed by QA record ID."""
+        if not qa_record_ids:
+            return {}
+
+        result = await db.execute(
+            select(QaKnowledgePoint.qa_record_id, KnowledgePoint)
+            .join(KnowledgePoint, KnowledgePoint.id == QaKnowledgePoint.knowledge_point_id)
+            .where(QaKnowledgePoint.qa_record_id.in_(qa_record_ids))
+            .order_by(QaKnowledgePoint.qa_record_id.asc(), KnowledgePoint.sort_order.asc(), KnowledgePoint.id.asc())
+        )
+        points: dict[int, list[KnowledgePoint]] = {}
+        for qa_record_id, point in result.all():
+            points.setdefault(int(qa_record_id), []).append(point)
+        return points

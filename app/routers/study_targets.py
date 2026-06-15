@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
+from app.schemas.material_structure import MaterialChunkResponse, TargetChunksResponse
 from app.schemas.response import ApiResponse, PageResult
 from app.schemas.study_target import (
     StudyTargetCreateRequest,
@@ -12,6 +13,7 @@ from app.schemas.study_target import (
     StudyTargetUpdateRequest,
 )
 from app.services.study_target_service import StudyTargetService
+from app.services.material_structure_service import MaterialStructureService
 from app.utils.responses import fail, page_result, success
 
 router = APIRouter(prefix="/study-targets", tags=["study-targets"])
@@ -90,6 +92,32 @@ async def get_study_target(
     return success(
         data=StudyTargetDetailResponse(
             target=StudyTargetResponse.model_validate(target),
+        )
+    )
+
+
+@router.get("/{target_id}/chunks", response_model=ApiResponse[TargetChunksResponse])
+async def list_target_chunks(
+    target_id: int,
+    limit: int = Query(default=200, ge=1, le=1000, description="最多返回 chunks 数量"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询某个学习目标下所有资料的 chunks，供目标级知识提炼和知识图谱使用。"""
+    try:
+        chunks = await MaterialStructureService.list_target_chunks(
+            db,
+            current_user=current_user,
+            target_id=target_id,
+            limit=limit,
+        )
+    except ValueError as exc:
+        return fail(code=40401, message=str(exc))
+
+    return success(
+        data=TargetChunksResponse(
+            target_id=target_id,
+            chunks=[MaterialChunkResponse.model_validate(chunk) for chunk in chunks],
         )
     )
 

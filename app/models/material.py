@@ -105,6 +105,16 @@ class Material(Base):
         nullable=True,
         comment="资料解析失败原因",
     )
+    parse_warning: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="资料解析质量提示或风险说明",
+    )
+    parse_metadata: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="资料解析过程元数据 JSON，例如页数、耗时、失败页码等",
+    )
 
     # --- 状态控制 ---
     is_deleted: Mapped[bool] = mapped_column(

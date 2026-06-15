@@ -12,6 +12,7 @@ from app.db.base import Base
 from app.models import user  # noqa: F401
 from app.models import study_target  # noqa: F401
 from app.models import material  # noqa: F401
+from app.models import material_structure  # noqa: F401
 from app.models import qa  # noqa: F401
 from app.models import parse_task  # noqa: F401
 from app.models import admin_log  # noqa: F401
@@ -19,6 +20,9 @@ from app.models import question  # noqa: F401
 from app.models import test_record  # noqa: F401
 from app.models import wrong_question  # noqa: F401
 from app.models import review_plan  # noqa: F401
+from app.models import knowledge  # noqa: F401
+from app.models import knowledge_point  # noqa: F401
+from app.models import ai_call_log  # noqa: F401
 
 config = context.config
 

@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -116,4 +116,48 @@ class WrongQuestion(Base):
         onupdate=func.now(),
         nullable=False,
         comment="错题更新时间",
+    )
+
+
+class WrongQuestionKnowledgePoint(Base):
+    """Relation between one wrong question and graph knowledge points."""
+
+    __tablename__ = "wrong_question_knowledge_points"
+    __table_args__ = (
+        UniqueConstraint(
+            "wrong_question_id",
+            "knowledge_point_id",
+            name="uq_wrong_question_knowledge_points_wrong_point",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    wrong_question_id: Mapped[int] = mapped_column(
+        ForeignKey("wrong_questions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="错题记录ID",
+    )
+    knowledge_point_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_points.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="知识点ID",
+    )
+    wrong_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="该错题在该知识点上的错误原因",
+    )
+    relevance_score: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=1.0,
+        comment="错题与知识点的关联强度",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        comment="关联创建时间",
     )

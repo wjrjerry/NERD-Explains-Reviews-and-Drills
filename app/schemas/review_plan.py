@@ -16,6 +16,7 @@ class ReviewPlanTask(BaseModel):
     content: str
     material_id: int | None = None
     wrong_question_id: int | None = None
+    knowledge_point_id: int | None = None
     completed: bool = False
 
 
