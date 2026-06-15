@@ -3,9 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org/debian}
-        DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-http://deb.debian.org/debian-security}
     container_name: ai-study-api
     restart: unless-stopped
     env_file:

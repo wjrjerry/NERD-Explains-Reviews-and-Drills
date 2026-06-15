@@ -98,3 +98,117 @@ class MaterialChunk(Base):
 
     material = relationship("Material", backref="chunks", lazy="selectin")
     section = relationship("MaterialSection", backref="chunks", lazy="selectin")
+
+
+class MaterialFigure(Base):
+    """图片、几何图、流程图等视觉说明。"""
+
+    __tablename__ = "material_figures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    material_id: Mapped[int] = mapped_column(
+        ForeignKey("materials.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="关联资料 ID",
+    )
+    section_id: Mapped[int | None] = mapped_column(
+        ForeignKey("material_sections.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment="关联章节 ID",
+    )
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="图片标题")
+    description: Mapped[str] = mapped_column(Text, nullable=False, comment="图片或图形说明")
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False, comment="排序序号")
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="来源页码")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    material = relationship("Material", backref="figures", lazy="selectin")
+    section = relationship("MaterialSection", backref="figures", lazy="selectin")
+
+
+class MaterialTable(Base):
+    """资料中的表格内容。"""
+
+    __tablename__ = "material_tables"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    material_id: Mapped[int] = mapped_column(
+        ForeignKey("materials.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="关联资料 ID",
+    )
+    section_id: Mapped[int | None] = mapped_column(
+        ForeignKey("material_sections.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment="关联章节 ID",
+    )
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="表格标题")
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="Markdown 或纯文本表格内容")
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False, comment="排序序号")
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="来源页码")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    material = relationship("Material", backref="tables", lazy="selectin")
+    section = relationship("MaterialSection", backref="tables", lazy="selectin")
+
+
+class MaterialFormula(Base):
+    """资料中的公式、LaTeX 和解释。"""
+
+    __tablename__ = "material_formulas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    material_id: Mapped[int] = mapped_column(
+        ForeignKey("materials.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="关联资料 ID",
+    )
+    section_id: Mapped[int | None] = mapped_column(
+        ForeignKey("material_sections.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment="关联章节 ID",
+    )
+    expression: Mapped[str] = mapped_column(Text, nullable=False, comment="公式表达式或 LaTeX")
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True, comment="公式解释")
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False, comment="排序序号")
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="来源页码")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    material = relationship("Material", backref="formulas", lazy="selectin")
+    section = relationship("MaterialSection", backref="formulas", lazy="selectin")

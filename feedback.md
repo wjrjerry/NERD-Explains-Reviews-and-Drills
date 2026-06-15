@@ -1,10 +1,17 @@
-# main 分支前后端实现反馈
+# backend 分支前后端实现反馈
 
-本文基于当前 `main` 分支代码进行分析，重点检查前端是否已经实现后端提供的核心功能、当前学习闭环是否完整，以及后续仍需补齐的接口和交互。
+本文基于当前 `backend` 分支代码进行分析，并结合本次重新编译、启动 Nerd 后端后的实际结果，重点检查前端是否已经实现后端提供的核心功能、当前学习闭环是否完整，以及后续仍需补齐的接口和交互。
 
 ## 1. 总体结论
 
-当前 `main` 已经从“单资料 AI 学习闭环”推进到一个较完整的全栈版本。后端提供了认证、学习目标、资料上传与解析、结构化资料、知识提炼、知识图谱、AI 问答、AI 出题、自测、错题、复习计划、导出、AI 用量和管理员接口；前端已经接入其中大部分学生端核心能力。
+当前 `backend` 已经从“单资料 AI 学习闭环”推进到一个较完整的全栈版本。后端提供了认证、学习目标、资料上传与解析、结构化资料、知识提炼、知识图谱、AI 问答、AI 出题、自测、错题、复习计划、导出、AI 用量和管理员接口；前端已经接入其中大部分学生端核心能力。
+
+本次 backend 更新重点补强了资料解析链路，尤其是 PDF/图片/OCR 相关能力：
+
+- Docker 镜像新增 `poppler-utils`、`tesseract-ocr`、`tesseract-ocr-chi-sim` 等解析依赖。
+- 后端新增视觉解析服务与 PDF/OCR fallback 逻辑。
+- 资料解析后仍会自动触发资料级知识提炼、目标级知识提炼和知识图谱刷新。
+- 新增资料视觉结构表与 Alembic merge 迁移，数据库结构可以正常升级到最新 heads。
 
 当前前端已经覆盖：
 
@@ -37,12 +44,18 @@
 
 ## 2. 当前运行与构建状态
 
-当前 `main` 分支已通过以下检查：
+当前 `backend` 分支已通过以下检查：
 
 ```text
-前端构建：npm run build 通过
-后端编译：python -m compileall app 通过
-当前分支：main...origin/main
+后端镜像：docker compose up --build -d 构建通过
+数据库迁移：docker compose exec api alembic upgrade heads 通过
+后端健康检查：GET /health 通过
+数据库健康检查：GET /health/db 通过
+Redis 健康检查：GET /health/redis 通过
+OCR 依赖：tesseract 已安装，语言包包含 chi_sim / eng / osd
+PDF 依赖：pdfinfo 可用，poppler 已安装
+解析测试：pytest tests/test_vision_parse_service.py tests/test_multimodal_parse_compare.py -q 通过，结果为 4 passed, 1 skipped
+当前分支：backend...origin/backend
 ```
 
 推荐运行方式：
@@ -62,6 +75,27 @@ npm run dev
 前端：http://127.0.0.1:5173/
 后端：http://localhost:8000
 Swagger：http://localhost:8000/docs
+```
+
+本次重新运行时遇到过一次容器名冲突：
+
+```text
+Error response from daemon: Conflict. The container name "/ai-study-postgres" is already in use
+```
+
+原因是旧的 `ai-study-backend` compose 项目仍在运行，并且两个项目都使用了固定容器名 `ai-study-api`、`ai-study-postgres`、`ai-study-redis`。处理方式是先在旧项目目录执行：
+
+```bash
+cd /home/ywchen/study/sem2year3/SE/ai-study-backend
+docker compose down
+```
+
+然后回到 Nerd 项目重新启动：
+
+```bash
+cd /home/ywchen/study/sem2year3/SE/NERD-Explains-Reviews-and-Drills
+docker compose up -d
+docker compose exec api alembic upgrade heads
 ```
 
 ## 3. 前端对后端接口覆盖情况
@@ -692,7 +726,7 @@ GET /admin/logs
 
 ## 7. 验收视角总结
 
-当前 `main` 分支已经可以作为“完整学习闭环演示版本”：
+当前 `backend` 分支已经可以作为“完整学习闭环演示版本”：
 
 ```text
 注册/登录

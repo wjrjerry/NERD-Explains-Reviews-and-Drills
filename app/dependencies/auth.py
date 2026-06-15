@@ -13,7 +13,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    authorization: str | None = Header(default=None, alias="Authorization"),
+    authorization: str | None = Header(default=None),
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -28,12 +28,10 @@ async def get_current_user(
     """
     if credentials is None:
         if authorization:
-            scheme = authorization.split(" ", 1)[0].strip().lower()
-            if scheme and scheme != "bearer":
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="认证令牌类型错误",
-                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="认证令牌类型错误",
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="未提供认证令牌",

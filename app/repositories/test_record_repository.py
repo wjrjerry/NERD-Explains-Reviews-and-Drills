@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.test_record import TestAnswerRecord, TestRecord
@@ -77,34 +77,3 @@ class TestRecordRepository:
             )
         )
         return result.scalar_one_or_none()
-
-    @staticmethod
-    async def list_test_records(
-        db: AsyncSession,
-        *,
-        user_id: int,
-        page: int,
-        page_size: int,
-        target_id: int | None = None,
-        material_id: int | None = None,
-    ) -> tuple[list[TestRecord], int]:
-        """List submitted self-test records for the current user."""
-        filters = [TestRecord.user_id == user_id]
-        if target_id is not None:
-            filters.append(TestRecord.target_id == target_id)
-        if material_id is not None:
-            filters.append(TestRecord.material_id == material_id)
-
-        total_result = await db.execute(
-            select(func.count()).select_from(TestRecord).where(*filters)
-        )
-        total = int(total_result.scalar_one())
-
-        result = await db.execute(
-            select(TestRecord)
-            .where(*filters)
-            .order_by(TestRecord.created_at.desc(), TestRecord.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        return list(result.scalars().all()), total

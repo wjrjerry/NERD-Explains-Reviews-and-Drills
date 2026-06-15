@@ -38,6 +38,54 @@ class MaterialChunkResponse(BaseModel):
     updated_at: datetime
 
 
+class MaterialFigureResponse(BaseModel):
+    """资料图片说明响应模型。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    material_id: int
+    section_id: int | None
+    title: str | None
+    description: str
+    order_index: int
+    source_page: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MaterialTableResponse(BaseModel):
+    """资料表格响应模型。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    material_id: int
+    section_id: int | None
+    title: str | None
+    content: str
+    order_index: int
+    source_page: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MaterialFormulaResponse(BaseModel):
+    """资料公式响应模型。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    material_id: int
+    section_id: int | None
+    expression: str
+    explanation: str | None
+    order_index: int
+    source_page: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class MaterialSectionsResponse(BaseModel):
     material_id: int
     sections: list[MaterialSectionResponse]
@@ -48,10 +96,28 @@ class MaterialChunksResponse(BaseModel):
     chunks: list[MaterialChunkResponse]
 
 
+class MaterialFiguresResponse(BaseModel):
+    material_id: int
+    figures: list[MaterialFigureResponse]
+
+
+class MaterialTablesResponse(BaseModel):
+    material_id: int
+    tables: list[MaterialTableResponse]
+
+
+class MaterialFormulasResponse(BaseModel):
+    material_id: int
+    formulas: list[MaterialFormulaResponse]
+
+
 class MaterialStructuredResponse(BaseModel):
     material_id: int
     sections: list[MaterialSectionResponse]
     chunks: list[MaterialChunkResponse]
+    figures: list[MaterialFigureResponse] = []
+    tables: list[MaterialTableResponse] = []
+    formulas: list[MaterialFormulaResponse] = []
 
 
 class TargetChunksResponse(BaseModel):

@@ -3,7 +3,14 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.material import Material
-from app.models.material_structure import MaterialChunk, MaterialChunkType, MaterialSection
+from app.models.material_structure import (
+    MaterialChunk,
+    MaterialChunkType,
+    MaterialFigure,
+    MaterialFormula,
+    MaterialSection,
+    MaterialTable,
+)
 from app.models.user import User
 from app.repositories.material_structure_repository import MaterialStructureRepository
 from app.services.material_service import MaterialService
@@ -23,6 +30,9 @@ class MaterialStructureService:
     definition_keywords = ("定义", "概念", "称为", "是指", "叫做")
     example_keywords = ("例题", "例 ", "例：", "例:", "练习", "题目", "解：")
     key_sentence_keywords = ("重点", "注意", "必须", "核心", "关键", "考点", "结论")
+    labeled_block_pattern = re.compile(
+        r"(?ms)^(图片说明|图形说明|表格|公式)：\s*\n?(.*?)(?=^\S+：\s*$|\Z)"
+    )
 
     @staticmethod
     def _normalize_lines(parsed_text: str) -> list[str]:
@@ -83,10 +93,73 @@ class MaterialStructureService:
         return MaterialChunkType.text
 
     @staticmethod
-    def _build_structure(material: Material) -> tuple[list[MaterialSection], list[MaterialChunk]]:
+    def _split_labeled_items(text: str) -> list[str]:
+        return [
+            item.strip(" \n-•*")
+            for item in text.splitlines()
+            if item.strip(" \n-•*")
+        ]
+
+    @staticmethod
+    def _extract_structured_items(
+        material: Material,
+        default_section: MaterialSection | None,
+    ) -> tuple[list[MaterialFigure], list[MaterialTable], list[MaterialFormula]]:
+        parsed_text = material.parsed_text or ""
+        figures: list[MaterialFigure] = []
+        tables: list[MaterialTable] = []
+        formulas: list[MaterialFormula] = []
+
+        for match in MaterialStructureService.labeled_block_pattern.finditer(parsed_text):
+            label = match.group(1)
+            content = match.group(2).strip()
+            if not content:
+                continue
+
+            section = default_section
+            section_id = section.id if section is not None and section.id is not None else None
+            if label in {"图片说明", "图形说明"}:
+                for item in MaterialStructureService._split_labeled_items(content):
+                    figures.append(
+                        MaterialFigure(
+                            material_id=material.id,
+                            section_id=section_id,
+                            title=label,
+                            description=item,
+                            order_index=len(figures) + 1,
+                        )
+                    )
+            elif label == "表格":
+                tables.append(
+                    MaterialTable(
+                        material_id=material.id,
+                        section_id=section_id,
+                        title=label,
+                        content=content,
+                        order_index=len(tables) + 1,
+                    )
+                )
+            elif label == "公式":
+                for item in MaterialStructureService._split_labeled_items(content):
+                    formulas.append(
+                        MaterialFormula(
+                            material_id=material.id,
+                            section_id=section_id,
+                            expression=item,
+                            explanation=None,
+                            order_index=len(formulas) + 1,
+                        )
+                    )
+
+        return figures, tables, formulas
+
+    @staticmethod
+    def _build_structure(
+        material: Material,
+    ) -> tuple[list[MaterialSection], list[MaterialChunk], list[MaterialFigure], list[MaterialTable], list[MaterialFormula]]:
         parsed_text = (material.parsed_text or "").strip()
         if not parsed_text:
-            return [], []
+            return [], [], [], [], []
 
         sections: list[MaterialSection] = []
         chunk_specs: list[tuple[MaterialSection, str, int]] = []
@@ -156,20 +229,34 @@ class MaterialStructureService:
             )
             for section, text, order_index in chunk_specs
         ]
-        return sections, chunks
+        default_section = sections[0] if sections else None
+        figures, tables, formulas = MaterialStructureService._extract_structured_items(
+            material,
+            default_section,
+        )
+        return sections, chunks, figures, tables, formulas
 
     @staticmethod
     async def rebuild_for_material(
         db: AsyncSession,
         *,
         material: Material,
-    ) -> tuple[list[MaterialSection], list[MaterialChunk]]:
-        sections, chunks = MaterialStructureService._build_structure(material)
+    ) -> tuple[
+        list[MaterialSection],
+        list[MaterialChunk],
+        list[MaterialFigure],
+        list[MaterialTable],
+        list[MaterialFormula],
+    ]:
+        sections, chunks, figures, tables, formulas = MaterialStructureService._build_structure(material)
         return await MaterialStructureRepository.replace_for_material(
             db,
             material_id=material.id,
             sections=sections,
             chunks=chunks,
+            figures=figures,
+            tables=tables,
+            formulas=formulas,
         )
 
     @staticmethod
@@ -204,6 +291,36 @@ class MaterialStructureService:
             material_id=material_id,
             section_id=section_id,
         )
+
+    @staticmethod
+    async def list_figures(
+        db: AsyncSession,
+        *,
+        current_user: User,
+        material_id: int,
+    ) -> list[MaterialFigure]:
+        await MaterialService.get_detail(db, current_user=current_user, material_id=material_id)
+        return await MaterialStructureRepository.list_figures_by_material(db, material_id=material_id)
+
+    @staticmethod
+    async def list_tables(
+        db: AsyncSession,
+        *,
+        current_user: User,
+        material_id: int,
+    ) -> list[MaterialTable]:
+        await MaterialService.get_detail(db, current_user=current_user, material_id=material_id)
+        return await MaterialStructureRepository.list_tables_by_material(db, material_id=material_id)
+
+    @staticmethod
+    async def list_formulas(
+        db: AsyncSession,
+        *,
+        current_user: User,
+        material_id: int,
+    ) -> list[MaterialFormula]:
+        await MaterialService.get_detail(db, current_user=current_user, material_id=material_id)
+        return await MaterialStructureRepository.list_formulas_by_material(db, material_id=material_id)
 
     @staticmethod
     async def list_target_chunks(

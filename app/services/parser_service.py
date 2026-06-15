@@ -1,5 +1,6 @@
 import json
 import re
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,7 +12,7 @@ from PIL import Image, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
 from pypdf import PdfReader
 
-from app.db.session import AsyncSessionLocal
+import app.db.session as db_session
 from app.core.config import settings
 from app.models.material import Material, MaterialParseStatus, MaterialType
 from app.models.parse_task import ParseTask
@@ -22,6 +23,7 @@ from app.repositories.parse_task_repository import ParseTaskRepository
 from app.repositories.user_repository import UserRepository
 from app.services.material_service import MaterialService
 from app.services.material_structure_service import MaterialStructureService
+from app.services.vision_parse_service import VisionParseService, VisionParseServiceError
 
 
 @dataclass
@@ -287,6 +289,160 @@ class ParserService:
         )
 
     @staticmethod
+    def _vision_result_to_extract_result(
+        *,
+        text: str,
+        method: str,
+        page_count: int,
+        pages: list[dict[str, Any]],
+        start_time: float,
+        warnings: list[str] | None = None,
+    ) -> ExtractResult:
+        return ParserService._finalize_extract_result(
+            ExtractResult(
+                text=text,
+                metadata={
+                    "method": method,
+                    "page_count": page_count,
+                    "pages": pages,
+                    "elapsed_ms": ParserService._elapsed_ms(start_time),
+                },
+                warnings=warnings or [],
+            )
+        )
+
+    @staticmethod
+    def _extract_image_vision(material: Material) -> ExtractResult:
+        """使用多模态视觉模型解析单张图片。
+
+        该能力默认关闭；开启后主要作为 OCR 失败或 OCR 质量较差时的兜底。
+        """
+        start_time = time.perf_counter()
+        file_path = ParserService._ensure_file_exists(material)
+        vision_result = VisionParseService.parse_image_file(file_path, context="图片视觉解析")
+        page_record = {
+            "page_number": 1,
+            "method": "vision",
+            "status": "succeeded",
+            "char_count": len(vision_result.text),
+            **vision_result.metadata,
+        }
+        return ParserService._vision_result_to_extract_result(
+            text=vision_result.text,
+            method="image_vision",
+            page_count=1,
+            pages=[page_record],
+            start_time=start_time,
+            warnings=vision_result.warnings,
+        )
+
+    @staticmethod
+    def _needs_vision(*, ocr_failed: bool = False, ocr_warnings: list[str] | None = None) -> bool:
+        """判断当前资料页是否需要多模态视觉解析。"""
+        if not settings.vision_enabled or not VisionParseService.is_enabled():
+            return False
+
+        if ocr_failed and settings.vision_fallback_on_ocr_failure:
+            return True
+
+        if ocr_warnings and settings.vision_fallback_on_low_quality:
+            return True
+
+        return False
+
+    @staticmethod
+    def _extract_pdf_by_vision(material: Material) -> ExtractResult:
+        """将 PDF 页面转图片后交给多模态视觉模型解析。
+
+        这条路径适合扫描版几何题、复杂 slides 或 OCR 完全失败的资料。默认
+        关闭，避免在没有 API Key 时影响现有离线 OCR 流程。
+        """
+        start_time = time.perf_counter()
+        file_path = ParserService._ensure_file_exists(material)
+
+        try:
+            pages = convert_from_path(
+                str(file_path),
+                dpi=settings.pdf_ocr_dpi,
+                first_page=1,
+                last_page=settings.vision_max_pages,
+            )
+        except Exception as exc:
+            raise ValueError(f"PDF 转图片失败：{exc}") from exc
+
+        texts: list[str] = []
+        page_records: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        failed_pages: list[int] = []
+
+        with tempfile.TemporaryDirectory(prefix="material-vision-") as temp_dir:
+            temp_path = Path(temp_dir)
+            for index, page in enumerate(pages, start=1):
+                page_path = temp_path / f"page-{index}.png"
+                page.save(page_path, format="PNG")
+
+                try:
+                    vision_result = VisionParseService.parse_image_file(
+                        page_path,
+                        context=f"PDF 第 {index} 页视觉解析",
+                    )
+                except VisionParseServiceError as exc:
+                    failed_pages.append(index)
+                    page_records.append(
+                        {
+                            "page_number": index,
+                            "method": "vision",
+                            "status": "failed",
+                            "error": str(exc),
+                        }
+                    )
+                    warnings.append(f"PDF 第 {index} 页视觉解析失败，已跳过该页")
+                    continue
+
+                page_records.append(
+                    {
+                        "page_number": index,
+                        "method": "vision",
+                        "status": "succeeded",
+                        "char_count": len(vision_result.text),
+                        **vision_result.metadata,
+                    }
+                )
+                warnings.extend(vision_result.warnings)
+                texts.append(vision_result.text)
+
+        parsed_text = "\n\n".join(texts).strip()
+        if not parsed_text:
+            raise ParseFailure(
+                "PDF 视觉解析未识别到可用文本",
+                metadata={
+                    "method": "pdf_vision",
+                    "page_count": len(pages),
+                    "pages": page_records,
+                    "failed_pages": failed_pages,
+                    "elapsed_ms": ParserService._elapsed_ms(start_time),
+                    "max_pages": settings.vision_max_pages,
+                    "saved_char_count": 0,
+                },
+                warnings=warnings,
+            )
+
+        if len(pages) >= settings.vision_max_pages:
+            warnings.append(f"PDF 视觉解析最多处理前 {settings.vision_max_pages} 页")
+
+        result = ParserService._vision_result_to_extract_result(
+            text=parsed_text,
+            method="pdf_vision",
+            page_count=len(pages),
+            pages=page_records,
+            start_time=start_time,
+            warnings=warnings,
+        )
+        result.metadata["failed_pages"] = failed_pages
+        result.metadata["max_pages"] = settings.vision_max_pages
+        return result
+
+    @staticmethod
     def _extract_pdf(material: Material) -> ExtractResult:
         """提取 PDF 文件文本。
 
@@ -298,7 +454,12 @@ class ParserService:
         if pdf_text_result.text:
             return pdf_text_result
 
-        return ParserService._extract_pdf_by_ocr(material)
+        try:
+            return ParserService._extract_pdf_by_ocr(material)
+        except ParseFailure:
+            if ParserService._needs_vision(ocr_failed=True):
+                return ParserService._extract_pdf_by_vision(material)
+            raise
 
     @staticmethod
     def _extract_image_ocr(material: Material) -> ExtractResult:
@@ -353,7 +514,36 @@ class ParserService:
         图片资料统一通过 OCR 进入 parsed_text，AI 模块后续仍只消费解析后的
         文本，不需要关心资料来自图片还是文本文件。
         """
-        return ParserService._extract_image_ocr(material)
+        try:
+            ocr_result = ParserService._extract_image_ocr(material)
+        except (ParseFailure, ValueError) as ocr_exc:
+            if ParserService._needs_vision(ocr_failed=True):
+                try:
+                    vision_result = ParserService._extract_image_vision(material)
+                except VisionParseServiceError:
+                    raise ocr_exc
+
+                vision_result.warnings = [
+                    f"图片 OCR 失败，已使用视觉模型兜底解析：{ocr_exc}",
+                    *vision_result.warnings,
+                ]
+                return vision_result
+            raise ocr_exc
+
+        if ParserService._needs_vision(ocr_warnings=ocr_result.warnings):
+            try:
+                vision_result = ParserService._extract_image_vision(material)
+            except VisionParseServiceError as exc:
+                ocr_result.warnings.append(f"图片视觉解析兜底失败：{exc}")
+                return ParserService._finalize_extract_result(ocr_result)
+
+            vision_result.warnings = [
+                "图片 OCR 质量较低，已使用视觉模型兜底解析",
+                *vision_result.warnings,
+            ]
+            return vision_result
+
+        return ocr_result
 
     @staticmethod
     def _normalize_parse_error(exc: Exception) -> str:
@@ -568,7 +758,7 @@ class ParserService:
         BackgroundTasks 在请求结束后运行，不能复用请求中的 AsyncSession。
         因此这里按 task_id 重新打开数据库会话、加载任务和资料，再执行解析。
         """
-        async with AsyncSessionLocal() as db:
+        async with db_session.AsyncSessionLocal() as db:
             task = await ParseTaskRepository.get_by_id(db, task_id)
             if task is None:
                 return

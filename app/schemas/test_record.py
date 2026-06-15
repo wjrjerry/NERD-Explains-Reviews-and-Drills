@@ -1,6 +1,4 @@
-from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class TestAnswerItem(BaseModel):
@@ -72,18 +70,3 @@ class TestSubmitResponse(BaseModel):
     wrong_count: int
     results: list[TestResultItem]
     knowledge_point_summary: list[KnowledgePointTestSummary] = Field(default_factory=list)
-
-
-class TestRecordResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    user_id: int
-    material_id: int
-    target_id: int | None
-    score: float
-    accuracy: float
-    total_count: int
-    correct_count: int
-    wrong_count: int
-    created_at: datetime

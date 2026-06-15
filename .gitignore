@@ -211,7 +211,9 @@ tempCodeRunnerFile.py
 
 # Project runtime files
 uploads/
-.codex-run/
+docs/temp/
+tests/outputs/
+artifacts/
 
 # Frontend dependencies and generated outputs
 frontend/node_modules/

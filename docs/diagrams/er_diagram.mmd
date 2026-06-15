@@ -1,0 +1,40 @@
+erDiagram
+  USERS {
+    INTEGER id PK
+    VARCHAR username
+    VARCHAR hashed_password
+    VARCHAR role
+  }
+  STUDY_TARGETS {
+    INTEGER id PK
+    INTEGER user_id FK
+    VARCHAR title
+  }
+  MATERIALS {
+    INTEGER id PK
+    INTEGER user_id FK
+    INTEGER target_id FK
+    VARCHAR original_filename
+    TEXT parsed_text
+    VARCHAR parse_status
+  }
+  AI_CALL_LOGS {
+    INTEGER id PK
+    INTEGER user_id FK
+    INTEGER material_id FK
+    VARCHAR call_type
+    VARCHAR provider
+    INTEGER latency_ms
+    TEXT error_message
+  }
+  QUESTIONS {
+    INTEGER id PK
+    INTEGER material_id FK
+    TEXT stem
+  }
+
+  USERS ||--o{ STUDY_TARGETS : owns
+  USERS ||--o{ MATERIALS : uploads
+  STUDY_TARGETS ||--o{ MATERIALS : contains
+  MATERIALS ||--o{ AI_CALL_LOGS : referenced_by
+  MATERIALS ||--o{ QUESTIONS : source_for

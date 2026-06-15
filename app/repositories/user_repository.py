@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, UserRole
@@ -94,11 +93,7 @@ class UserRepository:
         )
 
         db.add(user) # user对象存入AsyncSession 的暂存区
-        try:
-            await db.commit() # 异步发起请求，落盘
-        except IntegrityError as exc:
-            await db.rollback()
-            raise ValueError("用户名已存在") from exc
+        await db.commit() # 异步发起请求，落盘
         await db.refresh(user) # 落盘数据读回内存
 
         return user

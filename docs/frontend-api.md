@@ -247,12 +247,29 @@ failed     解析失败，查看 parse_error
 | `parsed` | 允许问答、出题、知识图谱、知识提炼 |
 | `failed` | 显示失败原因，允许重新解析 |
 
-资料响应还包含：
+资料响应中的核心字段：
 
-| 字段 | 说明 |
-|---|---|
-| `parse_error` | 解析失败原因，`failed` 时展示 |
-| `parse_warning` | 解析质量提示，例如 OCR 文本较短、疑似乱码、文本被截断 |
+```json
+{
+  "id": 1,
+  "target_id": 1,
+  "original_filename": "chapter1.pdf",
+  "file_type": "pdf",
+  "file_size": 102400,
+  "parse_status": "parsed",
+  "parse_error": null,
+  "parse_warning": "PDF 第 3 页 OCR 识别文本较短，可能需要人工校对或视觉解析",
+  "created_at": "2026-06-15T10:00:00Z",
+  "updated_at": "2026-06-15T10:00:05Z"
+}
+```
+
+字段说明：
+
+- `parse_error`：解析失败原因，仅在 `parse_status=failed` 时重点展示。
+- `parse_warning`：解析质量提示。资料可能已经 `parsed`，但 OCR 质量较低、内容被截断或部分页失败，前端建议用 warning 样式提醒用户。
+- `parsed_text`：列表和详情接口不返回完整解析文本。
+- `parse_metadata`：后端内部字段，记录 OCR 页数、耗时、失败页码、字符数等过程信息，普通前端接口不返回。
 
 ### 5.3 资料列表
 
@@ -330,6 +347,154 @@ POST /materials/{material_id}/parse
 DELETE /materials/{material_id}
 ```
 
+### 5.8 结构化解析结果
+
+解析成功后，后端会在保留 `parsed_text` 的同时生成 MVP 版结构化结果：
+
+```text
+material_sections  章节/小节目录
+material_chunks    可供知识提炼、问答、出题和知识图谱消费的文本块
+material_figures   图片、几何图、流程图说明
+material_tables    表格内容
+material_formulas  公式与解释
+```
+
+#### 查询资料章节
+
+```http
+GET /materials/{material_id}/sections
+```
+
+响应：
+
+```json
+{
+  "material_id": 1,
+  "sections": [
+    {
+      "id": 10,
+      "material_id": 1,
+      "parent_id": null,
+      "title": "第一章 需求分析",
+      "level": 1,
+      "order_index": 1,
+      "source_page": null,
+      "created_at": "2026-06-15T10:00:00Z",
+      "updated_at": "2026-06-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+#### 查询资料文本块
+
+```http
+GET /materials/{material_id}/chunks
+GET /materials/{material_id}/chunks?section_id=10
+```
+
+响应：
+
+```json
+{
+  "material_id": 1,
+  "chunks": [
+    {
+      "id": 100,
+      "material_id": 1,
+      "section_id": 10,
+      "chunk_type": "definition",
+      "title": "第一章 需求分析",
+      "text": "需求分析是明确系统边界、用户角色和功能范围的过程。",
+      "order_index": 1,
+      "source_page": null,
+      "created_at": "2026-06-15T10:00:00Z",
+      "updated_at": "2026-06-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+`chunk_type` 可选：
+
+```text
+text
+definition
+formula
+example
+key_sentence
+```
+
+#### 一次性查询结构化结果
+
+#### 查询图片说明
+
+```http
+GET /materials/{material_id}/figures
+```
+
+响应：
+
+```json
+{
+  "material_id": 1,
+  "figures": [
+    {
+      "id": 1,
+      "material_id": 1,
+      "section_id": null,
+      "title": "图片说明",
+      "description": "图中包含三角形 ABC，点 D 在 BC 上，AD 垂直 BC。",
+      "order_index": 1,
+      "source_page": null,
+      "created_at": "2026-06-15T10:00:00Z",
+      "updated_at": "2026-06-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+#### 查询表格
+
+```http
+GET /materials/{material_id}/tables
+```
+
+#### 查询公式
+
+```http
+GET /materials/{material_id}/formulas
+```
+
+```http
+GET /materials/{material_id}/structured
+```
+
+响应包含：
+
+```json
+{
+  "material_id": 1,
+  "sections": [],
+  "chunks": [],
+  "figures": [],
+  "tables": [],
+  "formulas": []
+}
+```
+
+#### 查询目标级 chunks
+
+```http
+GET /study-targets/{target_id}/chunks?limit=200
+```
+
+说明：
+
+- 只返回当前用户该目标下 `parse_status=parsed` 的资料 chunks。
+- 主要供目标级知识提炼、目标级 QA、目标级出题和知识图谱使用。
+- 前端通常不需要展示全部 chunks，但可用于调试、资料结构页或目标级学习页。
+
 ## 6. 自动解析与自动知识提炼流程
 
 上传资料且 `auto_parse=true` 后：
@@ -340,10 +505,18 @@ POST /materials
   -> 创建 parse_tasks
   -> BackgroundTasks 执行解析
   -> TXT / PDF 文本 / PDF OCR / 图片 OCR
-  -> 成功：materials.parse_status = parsed, 写入 parsed_text
-  -> 生成 material_sections / material_chunks
-  -> 失败：materials.parse_status = failed, 写入 parse_error
+  -> 成功：materials.parse_status = parsed, 写入 parsed_text / parse_warning / parse_metadata
+  -> 生成 material_sections / material_chunks / material_figures / material_tables / material_formulas
+  -> 失败：materials.parse_status = failed, 写入 parse_error，必要时写入 parse_warning / parse_metadata
 ```
+
+OCR 相关说明：
+
+- OCR 语言、超时时间、图片缩放、二值化阈值、PDF OCR DPI、最大页数和 `parsed_text` 最大保存长度均由后端配置控制。
+- 图片 OCR 会进行方向纠正、灰度化、放大、自动对比度和二值化。
+- 扫描版 PDF 会记录逐页 OCR 状态；普通前端只需要展示 `parse_warning`，不直接读取过程元数据。
+- 当 OCR 质量较低时，资料仍可能是 `parsed`，但会返回 `parse_warning`。
+- 当解析文本超过后端上限时，后端会截断保存并返回 `parse_warning`，避免 AI 输入过长。
 
 解析成功后后端自动执行：
 
@@ -787,10 +960,12 @@ GET /admin/logs?page=1&page_size=10&operation_type=retry_parse
 | 用户信息 | `GET /users/me` |
 | 目标管理 | `/study-targets` |
 | 资料库 | `/materials` |
-| 资料详情 | `GET /materials/{id}`, `GET /materials/{id}/preview` |
+| 资料详情 | `GET /materials/{id}`, `GET /materials/{id}/preview`, `GET /materials/{id}/structured` |
 | 解析状态 | `GET /materials/{id}` 轮询 |
+| 资料章节/文本块 | `GET /materials/{id}/sections`, `GET /materials/{id}/chunks` |
 | 知识提炼 | `POST /knowledge/extract`, `GET /exports/knowledge-summary/{target_id}.md` |
 | 知识图谱 | `GET /knowledge-graphs/{target_id}`, `POST /knowledge-graphs/generate` |
+| 目标级结构化上下文 | `GET /study-targets/{id}/chunks` |
 | 知识点详情 | `/knowledge-points/{id}/materials`, `/questions`, `/wrong-questions` |
 | AI 问答 | `POST /qa/ask`, `GET /qa/history` |
 | 练习出题 | `POST /questions/generate` |
@@ -808,12 +983,14 @@ GET /admin/logs?page=1&page_size=10&operation_type=retry_parse
 2. 创建学习目标 POST /study-targets
 3. 上传资料 POST /materials，默认 auto_parse=true
 4. 轮询 GET /materials/{id}，等待 parse_status=parsed
-5. 获取 GET /knowledge-graphs/{target_id}
-6. 如无图谱或需刷新，调用 POST /knowledge/extract 或 POST /knowledge-graphs/generate
-7. 使用 target_id / knowledge_point_id 进行 QA
-8. 使用 target_id / knowledge_point_ids 生成题目
-9. 提交测试 POST /tests/submit
-10. 查看错题、知识点掌握度和复习计划
-11. 查看 AI 用量
-12. 导出错题本、复习计划、知识提炼或 Anki CSV
+5. 如需资料目录，获取 GET /materials/{id}/sections 或 /structured
+6. 如需目标级上下文，获取 GET /study-targets/{target_id}/chunks
+7. 获取 GET /knowledge-graphs/{target_id}
+8. 如无图谱或需刷新，调用 POST /knowledge/extract 或 POST /knowledge-graphs/generate
+9. 使用 target_id / knowledge_point_id 进行 QA
+10. 使用 target_id / knowledge_point_ids 生成题目
+11. 提交测试 POST /tests/submit
+12. 查看错题、知识点掌握度和复习计划
+13. 查看 AI 用量
+14. 导出错题本、复习计划、知识提炼或 Anki CSV
 ```

@@ -36,12 +36,12 @@ async def test_engine(tmp_path_factory) -> AsyncGenerator:
     import app.models.parse_task
     import app.models.admin_log
     import app.models.knowledge
-    import app.models.knowledge_point
     import app.models.question
     import app.models.test_record
     import app.models.wrong_question
     import app.models.review_plan
     import app.models.qa
+    import app.models.knowledge_point
     import app.models.ai_call_log
 
     engine = create_async_engine(db_url, echo=False, future=True)
