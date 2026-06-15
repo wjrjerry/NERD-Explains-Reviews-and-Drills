@@ -53,6 +53,8 @@ def _extract_mock_keywords(text: str) -> list[str]:
         normalized = word.lower() if word.isascii() else word
         if normalized in seen:
             continue
+        if _is_noise_keyword(word):
+            continue
 
         seen.add(normalized)
         keywords.append(word)
@@ -62,10 +64,72 @@ def _extract_mock_keywords(text: str) -> list[str]:
     return keywords or ["知识点", "复习重点", "核心概念"]
 
 
+_NOISE_KEYWORDS = {
+    "pdf",
+    "txt",
+    "png",
+    "jpg",
+    "jpeg",
+    "image",
+    "text",
+    "book",
+    "ebook",
+    "chapter",
+    "chap",
+    "file",
+    "page",
+    "pages",
+    "资料",
+    "文件",
+}
+
+
+def _is_noise_keyword(value: str) -> bool:
+    """Return whether a term is likely file metadata instead of knowledge."""
+    normalized = value.strip().strip("._-").casefold()
+    if not normalized:
+        return True
+    if normalized in _NOISE_KEYWORDS:
+        return True
+    if re.fullmatch(r"\d+", normalized):
+        return True
+    if re.fullmatch(r"chapter\s*\d+", normalized):
+        return True
+    if re.fullmatch(r"ch\d+", normalized):
+        return True
+    if re.fullmatch(r"[a-z]{1,2}", normalized):
+        return True
+    return False
+
+
+def _clean_knowledge_terms(value: object, *, limit: int = 8) -> list[str]:
+    """Normalize model-returned knowledge terms and remove metadata noise."""
+    if not isinstance(value, list):
+        return []
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        term = _normalize_text(str(item)).strip(" ，,。.；;：:")
+        if _is_noise_keyword(term):
+            continue
+        key = term.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append(term[:40])
+        if len(terms) >= limit:
+            break
+    return terms
+
+
 def generate_knowledge(
     parsed_text: str,
     *,
     target_name: str | None = None,
+    scope: str = "material",
+    subject: str | None = None,
+    source_materials: list[dict[str, object]] | None = None,
 ) -> dict[str, str | list[str]]:
     """Call or mock AI to summarize material and extract learning points.
 
@@ -74,15 +138,20 @@ def generate_knowledge(
     data or a real LLM provider, as long as the returned structure matches
     KnowledgeExtractResponse.
     """
-    # TODO: Accept parsed material text as input.
-    # TODO: Accept optional target/course context if prompt quality needs it.
-    # TODO: First return deterministic mock data for frontend integration.
-    # TODO: Return summary, outline, keywords, key_points, and exam_points.
-    # TODO: Later replace mock logic with a real LLM call.
-    # TODO: Record AI call status, latency, and failure reason when logging is ready.
+    if settings.ai_provider != "mock":
+        return _generate_knowledge_with_real_ai(
+            parsed_text=parsed_text,
+            target_name=target_name,
+            scope=scope,
+            subject=subject,
+            source_materials=source_materials,
+        )
+
     text = _normalize_text(parsed_text)
     sentences = _split_sentences(text)
-    keywords = _extract_mock_keywords(text)
+    keywords = _clean_knowledge_terms(_extract_mock_keywords(text), limit=6)
+    if not keywords:
+        keywords = ["知识点", "复习重点", "核心概念"]
 
     if not text:
         summary = "当前资料暂无可用于知识提炼的文本内容。"
@@ -119,6 +188,105 @@ def generate_knowledge(
         "key_points": key_points,
         "exam_points": exam_points,
     }
+
+
+def _material_blocks_for_knowledge(
+    *,
+    parsed_text: str,
+    source_materials: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
+    """Build compact structured material blocks for knowledge extraction."""
+    if source_materials:
+        blocks: list[dict[str, object]] = []
+        for item in source_materials:
+            content = _normalize_text(str(item.get("content", "") or ""))
+            if not content:
+                continue
+            blocks.append(
+                {
+                    "material_id": item.get("material_id"),
+                    "title": str(item.get("title", "") or "").strip(),
+                    "content": content[:5000],
+                }
+            )
+        return blocks
+
+    text = _normalize_text(parsed_text)
+    return [{"material_id": None, "title": "", "content": text[:5000]}] if text else []
+
+
+def _normalize_knowledge_response(data: dict[str, object]) -> dict[str, str | list[str]]:
+    """Validate and clean the model response used by knowledge extraction."""
+    summary = _normalize_text(str(data.get("summary", "") or ""))
+    outline = _clean_knowledge_terms(data.get("outline"), limit=8)
+    keywords = _clean_knowledge_terms(data.get("keywords"), limit=8)
+    key_points = _normalize_string_list(data.get("key_points"))[:8]
+    exam_points = _normalize_string_list(data.get("exam_points"))[:8]
+
+    if not summary:
+        raise llm_service.LlmServiceError("LLM knowledge extraction summary is empty.")
+    if not outline:
+        outline = ["核心内容梳理", "重要概念与关系", "复习重点与考点"]
+    if not keywords:
+        keywords = ["核心概念", "复习重点", "考点分析"]
+    if not key_points:
+        key_points = [f"理解「{keyword}」的定义、作用和适用场景。" for keyword in keywords[:3]]
+    if not exam_points:
+        exam_points = [f"关注「{keyword}」相关的判断、解释和应用题。" for keyword in keywords[:3]]
+
+    return {
+        "summary": summary[:800],
+        "outline": outline,
+        "keywords": keywords,
+        "key_points": key_points,
+        "exam_points": exam_points,
+    }
+
+
+def _generate_knowledge_with_real_ai(
+    *,
+    parsed_text: str,
+    target_name: str | None,
+    scope: str,
+    subject: str | None,
+    source_materials: list[dict[str, object]] | None,
+) -> dict[str, str | list[str]]:
+    """Use the configured real LLM to extract readable learning knowledge."""
+    material_blocks = _material_blocks_for_knowledge(
+        parsed_text=parsed_text,
+        source_materials=source_materials,
+    )
+    if not material_blocks:
+        raise llm_service.LlmServiceError("No parsed material text for knowledge extraction.")
+
+    system_prompt = (
+        "你是一个严谨的备考知识提炼助手。请只基于资料正文生成复习摘要，"
+        "必须返回严格 JSON 对象，不要返回 Markdown、解释文字或代码块。"
+    )
+    user_prompt = (
+        "提炼范围："
+        f"{'目标级：综合该目标下所有资料' if scope == 'target' else '资料级：聚焦单份资料'}\n"
+        f"目标或资料名称：{target_name or '未提供'}\n"
+        f"科目：{subject or '未提供'}\n\n"
+        "资料 JSON：\n"
+        f"{json.dumps(material_blocks, ensure_ascii=False)}\n\n"
+        "请生成适合学生复习使用的知识提炼结果。要求：\n"
+        "1. summary 用 2-4 句话概括真正的课程内容，不要复述资料ID、文件名、作者、教材标题或格式信息。\n"
+        "2. outline 是 3-6 个复习提纲条目，应是章节/主题/能力结构，不要写“资料核心内容梳理”这类空泛模板。\n"
+        "3. keywords 是 4-8 个真实课程知识点；不要包含 pdf、txt、Chapter、Text、Book、文件名、纯数字等元信息。\n"
+        "4. key_points 是 3-6 条具体复习重点，说明需要理解什么、为什么重要。\n"
+        "5. exam_points 是 3-6 条可能考点，覆盖定义辨析、机制理解、应用分析或易错点。\n"
+        "6. 如果资料中出现英文术语，应保留关键术语，但必须是课程概念。\n\n"
+        "返回 JSON 对象，字段固定为：summary, outline, keywords, key_points, exam_points。"
+    )
+    content = llm_service.chat_completion(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        task="knowledge_extraction",
+        timeout_seconds=max(settings.ai_timeout_seconds, 60),
+        max_tokens=1600,
+    )
+    return _normalize_knowledge_response(_extract_json_object(content))
 
 
 def _select_reference_snippet(parsed_text: str, question: str) -> str:

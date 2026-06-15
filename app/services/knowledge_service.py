@@ -14,7 +14,7 @@ from app.schemas.knowledge import (
     KnowledgeExtractResponse,
 )
 from app.schemas.knowledge_graph import KnowledgeGraphGenerateRequest, KnowledgeGraphResponse
-from app.services import ai_service
+from app.services import ai_service, ai_usage_service
 from app.services.knowledge_graph_service import KnowledgeGraphService
 
 
@@ -45,17 +45,21 @@ def _to_response(
     )
 
 
-def _materials_text_for_target(materials: list[Material]) -> str:
-    """Build target-level extraction text from all parsed materials."""
-    chunks: list[str] = []
+def _materials_for_knowledge(materials: list[Material]) -> list[dict[str, object]]:
+    """Build structured target-level extraction input from parsed materials."""
+    blocks: list[dict[str, object]] = []
     for material in materials:
         parsed_text = (material.parsed_text or "").strip()
         if not parsed_text:
             continue
-        chunks.append(
-            f"资料ID {material.id}，文件名：{material.original_filename}\n{parsed_text}"
+        blocks.append(
+            {
+                "material_id": material.id,
+                "title": material.original_filename,
+                "content": parsed_text,
+            }
         )
-    return "\n\n".join(chunks)
+    return blocks
 
 
 async def extract_material_knowledge(
@@ -70,10 +74,27 @@ async def extract_material_knowledge(
     if material.parse_status != MaterialParseStatus.parsed or not material.parsed_text:
         raise ValueError("资料未解析完成")
 
-    generated = ai_service.generate_knowledge(
-        material.parsed_text,
-        target_name=material.original_filename,
-    )
+    ai_usage_service.clear_pending_traces()
+    try:
+        generated = ai_service.generate_knowledge(
+            material.parsed_text,
+            target_name=material.original_filename,
+            scope="material",
+            source_materials=[
+                {
+                    "material_id": material.id,
+                    "title": material.original_filename,
+                    "content": material.parsed_text,
+                }
+            ],
+        )
+    finally:
+        await ai_usage_service.record_pending_traces(
+            db,
+            user_id=current_user.id,
+            target_id=material.target_id,
+            material_id=material.id,
+        )
     row = await KnowledgeRepository.save_extraction(
         db,
         user_id=current_user.id,
@@ -128,14 +149,26 @@ async def extract_target_knowledge(
     if not materials:
         raise ValueError("该目标下暂无已解析资料，无法进行知识提炼")
 
-    source_text = _materials_text_for_target(materials)
-    if not source_text:
+    source_materials = _materials_for_knowledge(materials)
+    if not source_materials:
         raise ValueError("该目标下已解析资料没有可用于知识提炼的文本")
 
-    generated = ai_service.generate_knowledge(
-        source_text,
-        target_name=target.title,
-    )
+    ai_usage_service.clear_pending_traces()
+    try:
+        generated = ai_service.generate_knowledge(
+            "",
+            target_name=target.title,
+            subject=target.subject,
+            scope="target",
+            source_materials=source_materials,
+        )
+    finally:
+        await ai_usage_service.record_pending_traces(
+            db,
+            user_id=current_user.id,
+            target_id=target_id,
+            material_id=None,
+        )
     row = await KnowledgeRepository.save_extraction(
         db,
         user_id=current_user.id,

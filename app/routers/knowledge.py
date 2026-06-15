@@ -14,7 +14,7 @@ from app.schemas.knowledge import (
     KnowledgeExtractResponse,
 )
 from app.schemas.response import ApiResponse
-from app.services import knowledge_service
+from app.services import knowledge_service, llm_service
 from app.utils.responses import fail, success
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -77,5 +77,10 @@ async def extract_knowledge(
                 detail="Material is not parsed yet.",
             ) from exc
         return fail(code=40004, message=str(exc))
+    except llm_service.LlmServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI 知识提炼失败：{exc}",
+        ) from exc
 
     return success(result)
