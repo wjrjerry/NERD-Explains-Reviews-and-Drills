@@ -98,6 +98,28 @@ def test_normalize_graph_points_allows_parent_from_existing_graph():
     assert points[0].parent_name == "需求分析"
 
 
+def test_normalize_graph_points_uses_existing_name_to_reuse_node():
+    points = _normalize_graph_points(
+        [
+            {
+                "name": "风险",
+                "existing_name": "风险识别",
+                "description": "项目管理中的风险相关内容",
+                "importance_weight": 0.7,
+                "parent_name": "项目管理",
+                "level": 2,
+                "sort_order": 1,
+                "evidence": [{"material_id": 1, "snippet": "风险", "relevance_score": 0.8}],
+            }
+        ],
+        valid_material_ids={1},
+        max_points=5,
+        existing_point_names={"项目管理", "风险识别"},
+    )
+
+    assert points[0].name == "风险识别"
+
+
 def test_knowledge_point_node_schema_contains_mastery_fields():
     node = KnowledgePointNode(
         id=1,

@@ -2,6 +2,7 @@
 
 import re
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_point import MasteryStatus
@@ -49,9 +50,13 @@ def _normalize_graph_points(
     """Validate and normalize AI graph nodes before mutating the database."""
     normalized: list[KnowledgePointCreateData] = []
     seen_names: set[str] = set()
+    existing_names = existing_point_names or set()
 
     for index, raw in enumerate(raw_points[:max_points]):
         name = str(raw.get("name", "")).strip()
+        existing_name = str(raw.get("existing_name", "") or "").strip()
+        if existing_name in existing_names:
+            name = existing_name
         if not name or name in seen_names:
             continue
         seen_names.add(name)
@@ -60,7 +65,7 @@ def _normalize_graph_points(
         if (
             parent_name
             and parent_name not in seen_names
-            and parent_name not in (existing_point_names or set())
+            and parent_name not in existing_names
         ):
             parent_name = None
 
@@ -212,6 +217,29 @@ def _enrich_material_evidence(
     return enriched
 
 
+async def _lock_target_graph_generation(db: AsyncSession, *, target_id: int) -> bool:
+    """Serialize graph updates per target to avoid duplicate nodes from races."""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return False
+    await db.execute(
+        text("SELECT pg_advisory_lock(:lock_key)"),
+        {"lock_key": 41_000_000 + target_id},
+    )
+    return True
+
+
+async def _unlock_target_graph_generation(db: AsyncSession, *, target_id: int) -> None:
+    """Release a session-level target graph lock."""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    await db.execute(
+        text("SELECT pg_advisory_unlock(:lock_key)"),
+        {"lock_key": 41_000_000 + target_id},
+    )
+
+
 class KnowledgeGraphService:
     """Service for generating and querying target-level knowledge graphs."""
 
@@ -231,64 +259,69 @@ class KnowledgeGraphService:
         if target is None:
             raise ValueError("课程/考试目标不存在")
 
-        existing = await KnowledgeGraphRepository.list_points_by_target(
-            db,
-            user_id=current_user.id,
-            target_id=payload.target_id,
-        )
-        if existing and not payload.force_regenerate:
+        locked = await _lock_target_graph_generation(db, target_id=payload.target_id)
+        try:
+            existing = await KnowledgeGraphRepository.list_points_by_target(
+                db,
+                user_id=current_user.id,
+                target_id=payload.target_id,
+            )
+            if existing and not payload.force_regenerate:
+                return await KnowledgeGraphService.get_graph(
+                    db,
+                    current_user=current_user,
+                    target_id=payload.target_id,
+                )
+
+            materials = await MaterialRepository.list_parsed_by_target(
+                db,
+                user_id=current_user.id,
+                target_id=payload.target_id,
+            )
+            if not materials:
+                raise ValueError("该目标下暂无已解析资料，无法生成知识图谱")
+
+            ai_usage_service.clear_pending_traces()
+            try:
+                ai_result = ai_service.generate_knowledge_graph(
+                    target_title=target.title,
+                    subject=target.subject,
+                    materials=_materials_for_ai(materials),
+                    existing_points=_existing_points_for_ai(existing),
+                    max_points=payload.max_points,
+                )
+            finally:
+                await ai_usage_service.record_pending_traces(
+                    db,
+                    user_id=current_user.id,
+                    target_id=payload.target_id,
+                    material_id=None,
+                )
+            raw_points = ai_result.get("points", [])
+            if not isinstance(raw_points, list):
+                raise ValueError("AI 知识图谱返回格式错误")
+
+            normalized_points = _normalize_graph_points(
+                raw_points,
+                valid_material_ids={material.id for material in materials},
+                max_points=payload.max_points,
+                existing_point_names={point.name for point in existing},
+            )
+            normalized_points = _enrich_material_evidence(normalized_points, materials)
+            await KnowledgeGraphRepository.sync_graph_for_target(
+                db,
+                user_id=current_user.id,
+                target_id=payload.target_id,
+                points=normalized_points,
+            )
             return await KnowledgeGraphService.get_graph(
                 db,
                 current_user=current_user,
                 target_id=payload.target_id,
             )
-
-        materials = await MaterialRepository.list_parsed_by_target(
-            db,
-            user_id=current_user.id,
-            target_id=payload.target_id,
-        )
-        if not materials:
-            raise ValueError("该目标下暂无已解析资料，无法生成知识图谱")
-
-        ai_usage_service.clear_pending_traces()
-        try:
-            ai_result = ai_service.generate_knowledge_graph(
-                target_title=target.title,
-                subject=target.subject,
-                materials=_materials_for_ai(materials),
-                existing_points=_existing_points_for_ai(existing),
-                max_points=payload.max_points,
-            )
         finally:
-            await ai_usage_service.record_pending_traces(
-                db,
-                user_id=current_user.id,
-                target_id=payload.target_id,
-                material_id=None,
-            )
-        raw_points = ai_result.get("points", [])
-        if not isinstance(raw_points, list):
-            raise ValueError("AI 知识图谱返回格式错误")
-
-        normalized_points = _normalize_graph_points(
-            raw_points,
-            valid_material_ids={material.id for material in materials},
-            max_points=payload.max_points,
-            existing_point_names={point.name for point in existing},
-        )
-        normalized_points = _enrich_material_evidence(normalized_points, materials)
-        await KnowledgeGraphRepository.sync_graph_for_target(
-            db,
-            user_id=current_user.id,
-            target_id=payload.target_id,
-            points=normalized_points,
-        )
-        return await KnowledgeGraphService.get_graph(
-            db,
-            current_user=current_user,
-            target_id=payload.target_id,
-        )
+            if locked:
+                await _unlock_target_graph_generation(db, target_id=payload.target_id)
 
     @staticmethod
     async def get_graph(

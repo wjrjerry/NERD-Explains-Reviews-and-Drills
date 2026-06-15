@@ -161,6 +161,8 @@ def chat_completion(
     system_prompt: str,
     user_prompt: str,
     task: str = "unknown",
+    timeout_seconds: int | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """Call a Chat Completions compatible API and return assistant text."""
     api_key, base_url, model = _require_real_ai_settings()
@@ -183,6 +185,8 @@ def chat_completion(
         ],
         "temperature": 0.2,
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
         url,
@@ -195,7 +199,7 @@ def chat_completion(
     )
 
     try:
-        with request.urlopen(req, timeout=settings.ai_timeout_seconds) as response:
+        with request.urlopen(req, timeout=timeout_seconds or settings.ai_timeout_seconds) as response:
             response_body = response.read().decode("utf-8")
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")

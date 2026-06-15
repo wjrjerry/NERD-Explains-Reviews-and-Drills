@@ -15,7 +15,7 @@ class KnowledgeGraphGenerateRequest(BaseModel):
         default=False,
         description="Replace existing graph if one already exists.",
     )
-    max_points: int = Field(default=20, ge=1, le=50, description="Maximum graph nodes.")
+    max_points: int = Field(default=12, ge=1, le=30, description="Maximum graph nodes updated per run.")
 
 
 class KnowledgePointReference(BaseModel):

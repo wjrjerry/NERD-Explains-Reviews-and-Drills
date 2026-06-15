@@ -1089,12 +1089,15 @@ def _generate_knowledge_graph_with_real_ai(
         "可以根据新资料补充新知识点、更新描述、重要度、层级和资料证据。"
         "请优先返回新资料引入的新知识点，以及资料证据或属性需要更新的已有知识点，"
         "不需要机械重复所有没有变化的旧知识点。"
+        "如果返回项对应已有知识点，必须增加 existing_name 字段并填写已有图谱中的原始 name；"
+        "真正新增的知识点 existing_name 必须为 null。"
         "对每个返回知识点都要重新检查资料列表中的每一份资料，"
         "evidence 应列出所有实际相关的资料，而不只是最近上传的资料。"
         "返回的 points 应包含需要新增或更新的知识点，最多 "
         f"{max_points} 个节点。返回 JSON 对象，字段为 points。"
         "points 是数组，每个元素包含：\n"
         "- name: 知识点名称。\n"
+        "- existing_name: 对应已有知识点的原始名称；新增知识点为 null。\n"
         "- description: 简短说明。\n"
         "- importance_weight: 0 到 1 的重要程度，综合考虑考试常见度、基础依赖关系、资料覆盖篇幅和对后续知识的支撑程度。\n"
         "- parent_name: 父知识点名称，没有则为 null。\n"
@@ -1107,6 +1110,8 @@ def _generate_knowledge_graph_with_real_ai(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         task="knowledge_graph_generation",
+        timeout_seconds=max(settings.ai_timeout_seconds, 60),
+        max_tokens=2200,
     )
     data = _extract_json_object(content)
     raw_points = data.get("points")
