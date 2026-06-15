@@ -672,49 +672,60 @@ p {
 
 .subpage-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 18px;
+  margin-bottom: 20px;
   border-bottom: 1px solid rgba(35, 47, 72, 0.08);
-  padding-bottom: 14px;
+  padding-bottom: 18px;
 }
 
 .subpage-header div {
   display: grid;
   flex: 1;
-  gap: 4px;
+  gap: 8px;
 }
 
 .subpage-header span {
   color: #6d7788;
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 800;
 }
 
 .breadcrumb-line {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  width: fit-content;
+  gap: 10px;
 }
 
 .breadcrumb-line button {
-  padding: 0;
+  border-radius: 12px;
+  padding: 3px 8px;
   color: #007aff;
-  background: transparent;
-  font-size: 13px;
+  background: rgba(0, 122, 255, 0.10);
+  font-size: 18px;
   font-weight: 900;
+  transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.breadcrumb-line button:hover {
+  color: #0757a6;
+  background: rgba(0, 122, 255, 0.16);
+  transform: translateY(-1px);
 }
 
 .breadcrumb-line i,
 .breadcrumb-line em {
   color: #6d7788;
+  font-size: 18px;
   font-style: normal;
+  font-weight: 800;
 }
 
 .subpage-header strong {
   color: #1f3658;
-  font-size: 20px;
+  font-size: 24px;
 }
 
 .subpage-header small {

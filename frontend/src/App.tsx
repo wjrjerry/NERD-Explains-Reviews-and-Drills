@@ -758,7 +758,6 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <p className="eyebrow">已连接后端接口</p>
             <h1>{pageTitle(view)}</h1>
           </div>
           <button className="ghost-button" onClick={() => void initializeSession()}>
