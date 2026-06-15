@@ -87,3 +87,59 @@ def test_visual_labeled_blocks_build_structured_items():
     assert formulas[0].expression == "a^2 + b^2 = c^2"
     assert len(tables) == 1
     assert "| A | B |" in tables[0].content
+
+
+def test_default_section_chunks_do_not_repeat_full_text_title():
+    material = type(
+        "MaterialStub",
+        (),
+        {
+            "id": 8,
+            "parsed_text": "AbstractSyntaxChapter4\n\nA parser recognizes whether a sentence belongs to the language.",
+        },
+    )()
+
+    sections, chunks, _, _, _ = MaterialStructureService._build_structure(material)
+
+    assert sections[0].title == "全文"
+    assert chunks
+    assert all(chunk.title is None for chunk in chunks)
+
+
+def test_slide_heading_and_mixed_prose_are_not_overclassified_as_formula():
+    material = type(
+        "MaterialStub",
+        (),
+        {
+            "id": 9,
+            "parsed_text": (
+                "4.1SemanticActions\n\n"
+                "A parser recognizes whether a sentence belongs to the language of a grammar.\n"
+                "A compiler must do useful things with that sentence:\n"
+                "constructing abstract syntax tree\n"
+                "S → E $ E → T E′ E′ → + T E′\n"
+            ),
+        },
+    )()
+
+    sections, chunks, _, _, _ = MaterialStructureService._build_structure(material)
+
+    assert sections[0].title == "4.1SemanticActions"
+    assert chunks[0].title == "4.1SemanticActions"
+    assert chunks[0].chunk_type.value == "text"
+
+
+def test_standalone_formula_block_is_classified_as_formula():
+    material = type(
+        "MaterialStub",
+        (),
+        {
+            "id": 10,
+            "parsed_text": "公式：\na^2 + b^2 = c^2",
+        },
+    )()
+
+    _, chunks, _, _, formulas = MaterialStructureService._build_structure(material)
+
+    assert chunks[0].chunk_type.value == "formula"
+    assert formulas[0].expression == "a^2 + b^2 = c^2"

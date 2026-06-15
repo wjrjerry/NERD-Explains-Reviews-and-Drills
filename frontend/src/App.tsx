@@ -27,9 +27,13 @@ import {
 } from "lucide-react";
 import { api, clearToken, getToken } from "./api";
 import type {
+  AiUsageLogItem,
+  AiUsageSummary,
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgePointMaterialItem,
+  KnowledgePointReference,
   KnowledgeResult,
   Material,
   MaterialPreview,
@@ -57,6 +61,7 @@ type View =
   | "results"
   | "wrong"
   | "plans"
+  | "usage"
   | "admin";
 
 type NoticeTone = "info" | "success" | "danger";
@@ -77,6 +82,7 @@ const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard 
   { view: "results", label: "测试结果", icon: CheckCircle2 },
   { view: "wrong", label: "错题本", icon: AlertTriangle },
   { view: "plans", label: "复习计划", icon: CalendarDays },
+  { view: "usage", label: "AI 用量", icon: Bot },
   { view: "admin", label: "管理员端", icon: Shield }
 ];
 
@@ -109,9 +115,12 @@ function App() {
   const [structured, setStructured] = useState<MaterialStructured | null>(null);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
   const [preview, setPreview] = useState<MaterialPreview | null>(null);
+  const [aiUsageSummary, setAiUsageSummary] = useState<AiUsageSummary | null>(null);
+  const [aiUsageLogs, setAiUsageLogs] = useState<AiUsageLogItem[]>([]);
   const [health, setHealth] = useState<{ api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus }>({});
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
+  const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -122,6 +131,10 @@ function App() {
   const selectedMaterial = useMemo(
     () => materials.find((item) => item.id === selectedMaterialId) ?? null,
     [materials, selectedMaterialId]
+  );
+  const focusedKnowledgePoints = useMemo(
+    () => knowledgeGraph?.nodes.filter((node) => focusedKnowledgePointIds.includes(node.id)) ?? [],
+    [focusedKnowledgePointIds, knowledgeGraph]
   );
 
   const parsedCount = materials.filter((item) => item.parse_status === "parsed").length;
@@ -164,6 +177,18 @@ function App() {
     });
   }, [selectedTargetId, user]);
 
+  useEffect(() => {
+    if (!user || !materials.some((item) => item.parse_status === "parsing")) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshParsingMaterials();
+    }, 2500);
+
+    return () => window.clearInterval(timer);
+  }, [user, materials, selectedMaterialId, selectedTargetId]);
+
   async function initializeSession() {
     setLoading(true);
     try {
@@ -181,17 +206,21 @@ function App() {
   }
 
   async function loadDashboardData() {
-    const [targetData, materialData, wrongData, planData] = await Promise.all([
+    const [targetData, materialData, wrongData, planData, usageSummary, usageLogs] = await Promise.all([
       api.listTargets(),
       api.listMaterials(),
       api.listWrongQuestions().catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
-      api.listReviewPlans().catch(() => ({ items: [], total: 0, page: 1, page_size: 20 }))
+      api.listReviewPlans().catch(() => ({ items: [], total: 0, page: 1, page_size: 20 })),
+      api.getAiUsageSummary().catch(() => null),
+      api.listAiUsageLogs(1, 20).catch(() => ({ items: [], total: 0, page: 1, page_size: 20 }))
     ]);
 
     setTargets(targetData.items);
     setMaterials(materialData.items);
     setWrongQuestions(wrongData.items);
     setReviewPlans(planData.items);
+    setAiUsageSummary(usageSummary);
+    setAiUsageLogs(usageLogs.items);
 
     const firstTargetId = targetData.items[0]?.id;
     const [recordData, graphData] = await Promise.all([
@@ -205,6 +234,15 @@ function App() {
     const nextMaterialId = materialData.items[0]?.id ?? null;
     setSelectedTargetId((current) => current ?? nextTargetId);
     setSelectedMaterialId((current) => current ?? nextMaterialId);
+  }
+
+  async function loadAiUsage(targetId?: number, materialId?: number) {
+    const [summary, logs] = await Promise.all([
+      api.getAiUsageSummary(targetId, materialId).catch(() => null),
+      api.listAiUsageLogs(1, 20, targetId, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 20 }))
+    ]);
+    setAiUsageSummary(summary);
+    setAiUsageLogs(logs.items);
   }
 
   async function loadAdminHealth() {
@@ -236,6 +274,48 @@ function App() {
       setStructured(null);
       setQaRecords([]);
       setNotice({ tone: "danger", text: `资料上下文加载失败：${readMessage(error)}` });
+    }
+  }
+
+  async function refreshParsingMaterials() {
+    const parsingMaterials = materials.filter((item) => item.parse_status === "parsing");
+    if (!parsingMaterials.length) {
+      return;
+    }
+
+    const settled = await Promise.allSettled(parsingMaterials.map((item) => api.getMaterial(item.id)));
+    const updates = settled
+      .filter((item): item is PromiseFulfilledResult<{ material: Material }> => item.status === "fulfilled")
+      .map((item) => item.value.material);
+
+    if (!updates.length) {
+      return;
+    }
+
+    const updateMap = new Map(updates.map((item) => [item.id, item]));
+    const finished = updates.filter((item) => item.parse_status === "parsed" || item.parse_status === "failed");
+
+    setMaterials((current) => current.map((item) => updateMap.get(item.id) ?? item));
+
+    if (selectedMaterialId && finished.some((item) => item.id === selectedMaterialId)) {
+      await loadMaterialContext(selectedMaterialId).catch(() => undefined);
+    }
+
+    if (selectedTargetId && finished.some((item) => item.target_id === selectedTargetId)) {
+      const graph = await api.getKnowledgeGraph(selectedTargetId).catch(() => null);
+      setKnowledgeGraph(graph);
+    }
+
+    const selectedFinished = finished.find((item) => item.id === selectedMaterialId);
+    if (selectedFinished?.parse_status === "parsed") {
+      setNotice({
+        tone: "success",
+        text: selectedFinished.parse_warning
+          ? "资料解析完成，但解析质量有提示；AI 功能已启用，建议先校对内容。"
+          : "资料解析完成，AI 学习功能已启用。"
+      });
+    } else if (selectedFinished?.parse_status === "failed") {
+      setNotice({ tone: "danger", text: selectedFinished.parse_error ?? "资料解析失败，可查看详情后重试。" });
     }
   }
 
@@ -340,7 +420,7 @@ function App() {
       setMaterials((current) => [data.material, ...current]);
       setSelectedMaterialId(data.material.id);
       setSelectedTargetId(data.material.target_id);
-      setNotice({ tone: "success", text: "资料上传成功，请先解析资料再使用 AI 学习功能。" });
+      setNotice({ tone: "success", text: "资料上传成功，已开始后台解析；页面会自动刷新解析状态。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `资料上传失败：${readMessage(error)}` });
     }
@@ -362,22 +442,20 @@ function App() {
 
   async function handleParseMaterial(materialId: number) {
     setMaterials((current) =>
-      current.map((item) => (item.id === materialId ? { ...item, parse_status: "parsing", parse_error: null } : item))
+      current.map((item) =>
+        item.id === materialId ? { ...item, parse_status: "parsing", parse_error: null, parse_warning: null } : item
+      )
     );
 
     try {
       const data = await api.parseMaterial(materialId);
       setMaterials((current) => current.map((item) => (item.id === materialId ? data.material : item)));
-      if (selectedMaterialId === materialId) {
-        const previewData = await api.getMaterialPreview(materialId).catch(() => null);
-        setPreview(previewData);
-      }
       if (data.material.parse_status === "parsed") {
         setNotice({ tone: "success", text: "资料解析完成，AI 学习功能已启用。" });
       } else if (data.material.parse_status === "failed") {
         setNotice({ tone: "danger", text: data.material.parse_error ?? "资料解析失败。" });
       } else {
-        setNotice({ tone: "info", text: `资料状态已更新为 ${parseStatusText[data.material.parse_status]}。` });
+        setNotice({ tone: "info", text: "已提交后台解析任务，页面会自动刷新解析状态。" });
       }
     } catch (error) {
       await loadDashboardData().catch(() => undefined);
@@ -385,12 +463,30 @@ function App() {
     }
   }
 
-  async function handleExtractKnowledge() {
+  async function handleExtractKnowledge(scope: "material" | "target" = "material") {
+    if (scope === "target") {
+      if (!selectedTargetId) {
+        setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
+        return;
+      }
+
+      try {
+        const data = await api.extractKnowledge({ targetId: selectedTargetId, forceRegenerate: true });
+        setKnowledge(data);
+        const graph = await api.getKnowledgeGraph(selectedTargetId).catch(() => null);
+        setKnowledgeGraph(graph);
+        setNotice({ tone: "success", text: "目标级知识提炼已刷新。" });
+      } catch (error) {
+        setNotice({ tone: "danger", text: `目标级知识提炼失败：${readMessage(error)}` });
+      }
+      return;
+    }
+
     if (!selectedMaterial) {
       return;
     }
     try {
-      const data = await api.extractKnowledge(selectedMaterial.id);
+      const data = await api.extractKnowledge({ materialId: selectedMaterial.id });
       setKnowledge(data);
       setNotice({ tone: "success", text: "知识提炼完成。" });
     } catch (error) {
@@ -399,15 +495,28 @@ function App() {
   }
 
   async function handleAskQuestion(formData: FormData) {
-    if (!selectedMaterial) {
-      return;
-    }
+    const scope = String(formData.get("qa_scope") ?? "target");
+    const knowledgePointId = Number(formData.get("knowledge_point_id")) || undefined;
     const question = String(formData.get("question") ?? "").trim();
     if (!question) {
       return;
     }
+
+    if (scope === "material" && selectedMaterial?.parse_status !== "parsed") {
+      setNotice({ tone: "danger", text: "当前资料尚未解析完成，不能按资料提问。" });
+      return;
+    }
+    if (scope !== "material" && !selectedTargetId) {
+      setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
+      return;
+    }
+
     try {
-      const data = await api.askQuestion(selectedMaterial.id, question);
+      const data = await api.askQuestion(
+        scope === "material"
+          ? { materialId: selectedMaterial?.id, question }
+          : { targetId: selectedTargetId ?? undefined, knowledgePointId, question }
+      );
       setQaRecords((current) => [data, ...current]);
       setNotice({ tone: "success", text: "问答已生成并写入历史。" });
     } catch (error) {
@@ -416,21 +525,38 @@ function App() {
   }
 
   async function handleGenerateQuestions(formData: FormData) {
-    if (!selectedMaterial) {
-      return;
-    }
+    const scope = String(formData.get("question_scope") ?? "target");
     try {
       const difficulty = String(formData.get("difficulty") ?? "medium") as Difficulty;
       const count = Number(formData.get("count") ?? 5);
       const questionTypes = formData.getAll("question_types").map(String) as QuestionType[];
+      const knowledgePointIds = formData.getAll("knowledge_point_ids").map(Number).filter(Boolean);
+      const extraRequirement = String(formData.get("extra_requirement") ?? "").trim();
       if (!questionTypes.length) {
         setNotice({ tone: "danger", text: "请至少选择一种题型。" });
         return;
       }
-      const data = await api.generateQuestions(selectedMaterial.id, count, difficulty, questionTypes);
+      if (scope === "material" && selectedMaterial?.parse_status !== "parsed") {
+        setNotice({ tone: "danger", text: "当前资料尚未解析完成，不能按资料出题。" });
+        return;
+      }
+      if (scope !== "material" && !selectedTargetId) {
+        setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
+        return;
+      }
+
+      const data = await api.generateQuestions({
+        materialId: scope === "material" ? selectedMaterial?.id : undefined,
+        targetId: scope === "material" ? undefined : selectedTargetId ?? undefined,
+        knowledgePointIds,
+        extraRequirement,
+        count,
+        difficulty,
+        questionTypes
+      });
       setQuestions(data.questions);
       setView("practice");
-      setNotice({ tone: "success", text: "题目已生成。" });
+      setNotice({ tone: "success", text: scope === "material" ? "题目已按资料生成。" : "题目已按目标/知识点生成。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `题目生成失败：${readMessage(error)}` });
     }
@@ -449,6 +575,8 @@ function App() {
       if (wrongData) {
         setWrongQuestions(wrongData.items);
       }
+      const graph = await api.getKnowledgeGraph(selectedMaterial.target_id).catch(() => null);
+      setKnowledgeGraph(graph);
     } catch (error) {
       setNotice({ tone: "danger", text: `自测提交失败：${readMessage(error)}` });
     }
@@ -494,6 +622,34 @@ function App() {
     }
   }
 
+  async function handleUpdateKnowledgePointMastery(id: number, masteryStatus: WrongQuestion["mastery_status"]) {
+    try {
+      const updated = await api.updateKnowledgePointMastery(id, masteryStatus);
+      setKnowledgeGraph((current) =>
+        current
+          ? {
+              ...current,
+              nodes: current.nodes.map((node) =>
+                node.id === id
+                  ? {
+                      ...node,
+                      mastery_status: updated.mastery_status,
+                      mastery_score: updated.mastery_score,
+                      accuracy: updated.accuracy,
+                      answered_count: updated.answered_count,
+                      wrong_count: updated.wrong_count
+                    }
+                  : node
+              )
+            }
+          : current
+      );
+      setNotice({ tone: "success", text: "知识点掌握状态已更新。" });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `知识点掌握状态更新失败：${readMessage(error)}` });
+    }
+  }
+
   async function handleExport(action: () => Promise<void>, successText: string) {
     try {
       await action();
@@ -518,8 +674,11 @@ function App() {
     setStructured(null);
     setTestRecords([]);
     setPreview(null);
+    setAiUsageSummary(null);
+    setAiUsageLogs([]);
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
+    setFocusedKnowledgePointIds([]);
     setNotice({ tone: "info", text: "已退出登录。" });
   }
 
@@ -594,6 +753,7 @@ function App() {
             reviewPlans={reviewPlans}
             testRecords={testRecords}
             knowledgeGraph={knowledgeGraph}
+            aiUsageSummary={aiUsageSummary}
             onQuickView={(nextView) => setView(nextView)}
           />
         ) : null}
@@ -637,7 +797,8 @@ function App() {
                 void handleParseMaterial(selectedMaterial.id);
               }
             }}
-            onExtract={handleExtractKnowledge}
+            onExtractMaterial={() => void handleExtractKnowledge("material")}
+            onExtractTarget={() => void handleExtractKnowledge("target")}
             onGenerateGraph={handleGenerateKnowledgeGraph}
             onExportKnowledge={() => {
               if (selectedTargetId) {
@@ -653,8 +814,16 @@ function App() {
           <KnowledgeGraphPage
             target={selectedTarget}
             graph={knowledgeGraph}
-            wrongQuestions={wrongQuestions}
             onGenerate={handleGenerateKnowledgeGraph}
+            onUpdatePointMastery={(id, status) => void handleUpdateKnowledgePointMastery(id, status)}
+            onFocusQa={(point) => {
+              setFocusedKnowledgePointIds([point.id]);
+              setView("qa");
+            }}
+            onFocusPractice={(point) => {
+              setFocusedKnowledgePointIds([point.id]);
+              setView("practice");
+            }}
             onExport={() => {
               if (selectedTargetId) {
                 void handleExport(() => api.exportKnowledgeSummary(selectedTargetId), "知识总结已开始下载。");
@@ -668,10 +837,27 @@ function App() {
           />
         ) : null}
 
-        {view === "qa" ? <QaPage material={selectedMaterial} records={qaRecords} onAsk={handleAskQuestion} /> : null}
+        {view === "qa" ? (
+          <QaPage
+            target={selectedTarget}
+            material={selectedMaterial}
+            focusedKnowledgePoints={focusedKnowledgePoints}
+            records={qaRecords}
+            onAsk={handleAskQuestion}
+            onClearFocus={() => setFocusedKnowledgePointIds([])}
+          />
+        ) : null}
 
         {view === "practice" ? (
-          <PracticePage material={selectedMaterial} questions={questions} onGenerate={handleGenerateQuestions} onSubmit={handleSubmitTest} />
+          <PracticePage
+            target={selectedTarget}
+            material={selectedMaterial}
+            focusedKnowledgePoints={focusedKnowledgePoints}
+            questions={questions}
+            onGenerate={handleGenerateQuestions}
+            onSubmit={handleSubmitTest}
+            onClearFocus={() => setFocusedKnowledgePointIds([])}
+          />
         ) : null}
 
         {view === "results" ? (
@@ -697,6 +883,14 @@ function App() {
             plans={reviewPlans}
             onGenerate={handleGenerateReviewPlan}
             onExport={(planId) => void handleExport(() => api.exportReviewPlan(planId), "复习计划已开始下载。")}
+          />
+        ) : null}
+
+        {view === "usage" ? (
+          <AiUsagePage
+            summary={aiUsageSummary}
+            logs={aiUsageLogs}
+            onRefresh={() => void loadAiUsage()}
           />
         ) : null}
 
@@ -776,6 +970,7 @@ function Dashboard({
   reviewPlans,
   testRecords,
   knowledgeGraph,
+  aiUsageSummary,
   onQuickView
 }: {
   targets: StudyTarget[];
@@ -787,6 +982,7 @@ function Dashboard({
   reviewPlans: ReviewPlan[];
   testRecords: TestRecord[];
   knowledgeGraph: KnowledgeGraph | null;
+  aiUsageSummary: AiUsageSummary | null;
   onQuickView: (view: View) => void;
 }) {
   const parseStats = [
@@ -852,6 +1048,8 @@ function Dashboard({
 
       <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="GET /tests/records" />
       <MetricCard icon={AlertTriangle} label="错题总数" value={wrongQuestions.length} hint="高频薄弱点入口" />
+      <MetricCard icon={Bot} label="AI 调用" value={aiUsageSummary?.total_calls ?? 0} hint="GET /ai-usage/summary" />
+      <MetricCard icon={Sparkles} label="Token 总量" value={formatCompactNumber(aiUsageSummary?.total_tokens ?? 0)} hint="本地计量估算" />
 
       <section className="panel wide">
         <PanelTitle icon={CalendarDays} title="即将复习任务" />
@@ -974,7 +1172,7 @@ function MaterialsPage({
         <label className="drop-zone">
           <Upload size={28} />
           <span>选择 PDF / TXT / 图片资料</span>
-          <small>上传后需要调用解析接口，解析成功后才能使用 AI 功能</small>
+          <small>上传后默认自动进入后台解析；TXT 最稳定，PDF/图片会尝试 OCR</small>
           <input
             name="file"
             type="file"
@@ -1005,7 +1203,10 @@ function MaterialsPage({
               <button className="material-row material-row-inline" onClick={() => onSelect(material)}>
                 <div>
                   <strong>{material.original_filename}</strong>
-                  <span>{formatBytes(material.file_size)} · {material.file_type.toUpperCase()}</span>
+                  <span>
+                    {formatBytes(material.file_size)} · {material.file_type.toUpperCase()}
+                    {material.parse_warning ? " · 解析质量提示" : ""}
+                  </span>
                 </div>
               </button>
               <StatusBadge status={material.parse_status} />
@@ -1035,7 +1236,8 @@ function MaterialDetailPage({
   structured,
   knowledge,
   onParse,
-  onExtract,
+  onExtractMaterial,
+  onExtractTarget,
   onGenerateGraph,
   onExportKnowledge,
   onJumpToQa,
@@ -1047,7 +1249,8 @@ function MaterialDetailPage({
   structured: MaterialStructured | null;
   knowledge: KnowledgeResult | null;
   onParse: () => void;
-  onExtract: () => void;
+  onExtractMaterial: () => void;
+  onExtractTarget: () => void;
   onGenerateGraph: () => void;
   onExportKnowledge: () => void;
   onJumpToQa: () => void;
@@ -1066,10 +1269,12 @@ function MaterialDetailPage({
             <h2>{material.original_filename}</h2>
             <p>所属目标：{target?.title ?? "未匹配"} · 状态：{parseStatusText[material.parse_status]}</p>
             {material.parse_error ? <p className="danger-text">{material.parse_error}</p> : null}
+            {material.parse_warning ? <p className="warning-text">{material.parse_warning}</p> : null}
           </div>
           <div className="quick-actions">
             <button disabled={material.parse_status === "parsing"} onClick={onParse}><RefreshCw size={16} />解析资料</button>
-            <button disabled={aiDisabled} onClick={onExtract}><Sparkles size={16} />知识提炼</button>
+            <button disabled={aiDisabled} onClick={onExtractMaterial}><Sparkles size={16} />资料提炼</button>
+            <button disabled={!target} onClick={onExtractTarget}><Sparkles size={16} />目标提炼</button>
             <button disabled={aiDisabled} onClick={onGenerateGraph}><Network size={16} />生成图谱</button>
             <button disabled={!target} onClick={onExportKnowledge}><Download size={16} />导出总结</button>
             <button disabled={aiDisabled} onClick={onJumpToQa}><MessageSquare size={16} />AI 问答</button>
@@ -1080,13 +1285,19 @@ function MaterialDetailPage({
 
       <section className="panel">
         <PanelTitle icon={FileText} title="资料预览" />
+        {material.parse_status === "parsing" ? (
+          <p className="muted-text">资料正在后台解析，完成后会自动刷新预览、结构化章节和图谱。</p>
+        ) : null}
         <p className="preview-box">{preview?.preview_text || "当前资料暂无文本预览。"}</p>
       </section>
 
       <section className="panel">
         <PanelTitle icon={TableOfContents} title="结构化章节" />
         {structured?.sections.length || structured?.chunks.length ? (
-          <StructuredReader structured={structured} />
+          <>
+            <StructuredReader structured={structured} />
+            <StructuredArtifacts structured={structured} />
+          </>
         ) : (
           <p className="muted-text">暂无章节结构，解析完成后可查看 sections 与 chunks。</p>
         )}
@@ -1135,8 +1346,8 @@ function StructuredReader({ structured }: { structured: MaterialStructured }) {
       <div className="chunk-list">
         {visibleChunks.length ? visibleChunks.map((chunk) => (
           <article key={chunk.id} className="chunk-card">
-            <strong>{chunk.title || `文本块 ${chunk.order_index + 1}`}</strong>
-            <span>{chunk.chunk_type}{chunk.source_page ? ` · 第 ${chunk.source_page} 页` : ""}</span>
+            <strong>{chunk.title || `文本块 ${chunk.order_index}`}</strong>
+            <span>{chunkTypeText[chunk.chunk_type] ?? chunk.chunk_type}{chunk.source_page ? ` · 第 ${chunk.source_page} 页` : ""}</span>
             <p>{chunk.text}</p>
           </article>
         )) : <p className="muted-text">当前章节暂无文本块。</p>}
@@ -1145,30 +1356,79 @@ function StructuredReader({ structured }: { structured: MaterialStructured }) {
   );
 }
 
+const chunkTypeText: Record<string, string> = {
+  text: "文本",
+  definition: "定义",
+  formula: "公式",
+  example: "例题",
+  key_sentence: "重点句"
+};
+
 function KnowledgeGraphPage({
   target,
   graph,
-  wrongQuestions,
   onGenerate,
+  onUpdatePointMastery,
+  onFocusQa,
+  onFocusPractice,
   onExport,
   onExportAnki
 }: {
   target: StudyTarget | null;
   graph: KnowledgeGraph | null;
-  wrongQuestions: WrongQuestion[];
   onGenerate: () => void;
+  onUpdatePointMastery: (id: number, masteryStatus: WrongQuestion["mastery_status"]) => void;
+  onFocusQa: (point: KnowledgePointReference) => void;
+  onFocusPractice: (point: KnowledgePointReference) => void;
   onExport: () => void;
   onExportAnki: () => void;
 }) {
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<{
+    loading: boolean;
+    materials: KnowledgePointMaterialItem[];
+    questions: Question[];
+    wrongQuestions: WrongQuestion[];
+    error: string | null;
+  }>({ loading: false, materials: [], questions: [], wrongQuestions: [], error: null });
   const activeNode = graph?.nodes.find((node) => node.id === activeId) ?? graph?.nodes[0] ?? null;
-  const relatedWrong = activeNode
-    ? wrongQuestions.filter((item) => item.knowledge_points.some((point) => activeNode.name.includes(point) || point.includes(activeNode.name)))
-    : [];
 
   useEffect(() => {
     setActiveId(graph?.nodes[0]?.id ?? null);
   }, [graph?.target_id, graph?.nodes.length]);
+
+  useEffect(() => {
+    if (!activeNode) {
+      setDetail({ loading: false, materials: [], questions: [], wrongQuestions: [], error: null });
+      return;
+    }
+
+    let ignore = false;
+    setDetail((current) => ({ ...current, loading: true, error: null }));
+    void Promise.all([
+      api.listKnowledgePointMaterials(activeNode.id),
+      api.listKnowledgePointQuestions(activeNode.id).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
+      api.listKnowledgePointWrongQuestions(activeNode.id).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
+    ])
+      .then(([materialsData, questionsData, wrongData]) => {
+        if (ignore) return;
+        setDetail({
+          loading: false,
+          materials: materialsData.items,
+          questions: questionsData.items,
+          wrongQuestions: wrongData.items,
+          error: null
+        });
+      })
+      .catch((error) => {
+        if (ignore) return;
+        setDetail({ loading: false, materials: [], questions: [], wrongQuestions: [], error: readMessage(error) });
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeNode?.id]);
 
   return (
     <div className="two-column graph-layout">
@@ -1215,7 +1475,22 @@ function KnowledgeGraphPage({
               <span>作答 {activeNode.answered_count}</span>
             </div>
             <InfoList title="关联资料片段" items={activeNode.materials.map((item) => item.evidence_text || `资料 ${item.material_id}`)} />
-            <InfoList title="关联错题" items={relatedWrong.map((item) => item.stem)} />
+            <div className="quick-actions">
+              <button onClick={() => onFocusQa(activeNode)}><MessageSquare size={16} />围绕此点提问</button>
+              <button onClick={() => onFocusPractice(activeNode)}><ClipboardCheck size={16} />按此点出题</button>
+            </div>
+            <div className="quick-actions">
+              {(["unmastered", "reviewing", "mastered"] as const).map((status) => (
+                <button key={status} className={activeNode.mastery_status === status ? "active-pill" : ""} onClick={() => onUpdatePointMastery(activeNode.id, status)}>
+                  {status}
+                </button>
+              ))}
+            </div>
+            {detail.loading ? <p className="muted-text">正在加载知识点详情...</p> : null}
+            {detail.error ? <p className="danger-text">{detail.error}</p> : null}
+            <InfoList title="精确关联资料" items={detail.materials.map((item) => `${item.original_filename}${item.evidence_text ? `：${item.evidence_text}` : ""}`)} />
+            <InfoList title="关联题目" items={detail.questions.map((item) => item.stem)} />
+            <InfoList title="关联错题" items={detail.wrongQuestions.map((item) => item.stem)} />
           </div>
         ) : (
           <p className="muted-text">请选择一个知识点。</p>
@@ -1225,16 +1500,46 @@ function KnowledgeGraphPage({
   );
 }
 
-function QaPage({ material, records, onAsk }: { material: Material | null; records: QaRecord[]; onAsk: (formData: FormData) => void }) {
-  if (!material) return <EmptyPanel text="请先选择一份资料，再进入 AI 问答页面。" />;
+function QaPage({
+  target,
+  material,
+  focusedKnowledgePoints,
+  records,
+  onAsk,
+  onClearFocus
+}: {
+  target: StudyTarget | null;
+  material: Material | null;
+  focusedKnowledgePoints: KnowledgePointReference[];
+  records: QaRecord[];
+  onAsk: (formData: FormData) => void;
+  onClearFocus: () => void;
+}) {
+  if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 问答页面。" />;
+
+  const defaultScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
 
   return (
     <div className="two-column qa-layout">
       <form className="panel form-panel" onSubmit={(event) => submitForm(event, onAsk)}>
         <PanelTitle icon={MessageSquare} title="提问" />
-        <p className="muted-text">当前资料：{material.original_filename}</p>
-        <textarea name="question" placeholder="围绕当前资料提出问题" required />
-        <button className="primary-button" type="submit" disabled={material.parse_status !== "parsed"}>
+        <p className="muted-text">
+          当前目标：{target?.title ?? "未选择"}；当前资料：{material?.original_filename ?? "未选择"}
+        </p>
+        {focusedKnowledgePoints.length ? (
+          <div className="tag-cloud">
+            {focusedKnowledgePoints.map((point) => <span key={point.id}>{point.name}</span>)}
+            <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button>
+          </div>
+        ) : null}
+        <select name="qa_scope" defaultValue={defaultScope}>
+          <option value="target" disabled={!target}>目标范围</option>
+          <option value="knowledge_point" disabled={!target || !focusedKnowledgePoints.length}>聚焦知识点</option>
+          <option value="material" disabled={!material}>当前资料</option>
+        </select>
+        {focusedKnowledgePoints[0] ? <input type="hidden" name="knowledge_point_id" value={focusedKnowledgePoints[0].id} /> : null}
+        <textarea name="question" placeholder="提出你的问题，可围绕目标、资料或选中的知识点" required />
+        <button className="primary-button" type="submit">
           <MessageSquare size={16} />提交问题
         </button>
       </form>
@@ -1246,6 +1551,11 @@ function QaPage({ material, records, onAsk }: { material: Material | null; recor
             <article className="chat-card" key={record.qa_record_id}>
               <strong>{record.question}</strong>
               <p>{record.answer}</p>
+              {record.knowledge_points?.length ? (
+                <div className="tag-cloud">
+                  {record.knowledge_points.map((point) => <span key={point.id}>{point.name}</span>)}
+                </div>
+              ) : null}
               {record.references.length ? <blockquote>{record.references[0].snippet}</blockquote> : null}
             </article>
           ))}
@@ -1256,15 +1566,21 @@ function QaPage({ material, records, onAsk }: { material: Material | null; recor
 }
 
 function PracticePage({
+  target,
   material,
+  focusedKnowledgePoints,
   questions,
   onGenerate,
-  onSubmit
+  onSubmit,
+  onClearFocus
 }: {
+  target: StudyTarget | null;
   material: Material | null;
+  focusedKnowledgePoints: KnowledgePointReference[];
   questions: Question[];
   onGenerate: (formData: FormData) => void;
   onSubmit: (answers: TestSubmitAnswer[]) => void;
+  onClearFocus: () => void;
 }) {
   const [objectiveAnswers, setObjectiveAnswers] = useState<Record<number, string[]>>({});
   const [subjectiveAnswers, setSubjectiveAnswers] = useState<Record<number, string>>({});
@@ -1274,18 +1590,26 @@ function PracticePage({
     setSubjectiveAnswers({});
   }, [questions]);
 
-  if (!material) return <EmptyPanel text="请先选择资料，再进入 AI 出题页面。" />;
+  if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 出题页面。" />;
 
   const submitAnswers = questions.map((question) =>
     question.type === "subjective"
       ? { question_id: question.id, answer_text: subjectiveAnswers[question.id]?.trim() ?? "" }
       : { question_id: question.id, answer: objectiveAnswers[question.id] ?? [] }
   );
+  const defaultScope = focusedKnowledgePoints.length && target ? "target" : target ? "target" : "material";
 
   return (
     <div className="practice-layout">
       <form className="panel practice-toolbar" onSubmit={(event) => submitForm(event, onGenerate)}>
         <PanelTitle icon={ClipboardCheck} title="生成练习题" />
+        <div className="toolbar-fields practice-scope">
+          <select name="question_scope" defaultValue={defaultScope}>
+            <option value="target" disabled={!target}>目标/知识点</option>
+            <option value="material" disabled={!material}>当前资料</option>
+          </select>
+          <input name="count" type="number" min="1" max="10" defaultValue="5" />
+        </div>
         <div className="checkbox-list">
           {questionTypeOptions.map((item) => (
             <label key={item.value} className="checkbox-row">
@@ -1300,17 +1624,29 @@ function PracticePage({
             <option value="medium">medium</option>
             <option value="hard">hard</option>
           </select>
-          <input name="count" type="number" min="1" max="10" defaultValue="5" />
+          <input name="extra_requirement" placeholder="自定义要求：如偏期末风格" />
         </div>
+        {focusedKnowledgePoints.length ? (
+          <div className="focused-points">
+            {focusedKnowledgePoints.map((point) => (
+              <label key={point.id} className="checkbox-row">
+                <input name="knowledge_point_ids" type="checkbox" value={point.id} defaultChecked />
+                <span>{point.name}</span>
+              </label>
+            ))}
+            <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button>
+          </div>
+        ) : null}
         <div className="toolbar-actions">
-          <button className="primary-button" type="submit" disabled={material.parse_status !== "parsed"}>
+          <button className="primary-button" type="submit">
             <Sparkles size={16} />生成题目
           </button>
-          <button className="ghost-button" type="button" disabled={!questions.length} onClick={() => onSubmit(submitAnswers)}>
+          <button className="ghost-button" type="button" disabled={!questions.length || !material} onClick={() => onSubmit(submitAnswers)}>
             提交自测
           </button>
         </div>
       </form>
+      {!material ? <p className="muted-text">当前后端自测提交仍要求 material_id，请选择目标下任一资料后再提交自测。</p> : null}
 
       <div className="question-list">
         {questions.length ? (
@@ -1393,6 +1729,16 @@ function ResultsPage({
 
       <section className="panel wide">
         <PanelTitle icon={Brain} title="题目结果明细" />
+        {result.knowledge_point_summary?.length ? (
+          <div className="knowledge-summary-grid">
+            {result.knowledge_point_summary.map((item) => (
+              <div className="summary-chip" key={item.knowledge_point_id}>
+                <strong>知识点 {item.knowledge_point_id}</strong>
+                <span>正确率 {Math.round(item.accuracy * 100)}% · 错 {item.wrong_count}/{item.total_count}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="list">
           {result.results.map((item) => {
             const question = questions.find((entry) => entry.id === item.question_id);
@@ -1402,6 +1748,7 @@ function ResultsPage({
                 <span>
                   你的答案：{formatAnswer(item.user_answer)} · 正确答案：{formatAnswer(item.correct_answer)} · 单题得分：{item.score}
                 </span>
+                {item.knowledge_point_ids.length ? <span>关联知识点 ID：{item.knowledge_point_ids.join("、")}</span> : null}
                 <p>{item.analysis}</p>
                 {item.matched_points.length ? <InfoList title="已覆盖要点" items={item.matched_points} /> : null}
                 {item.missing_points.length ? <InfoList title="缺失要点" items={item.missing_points} /> : null}
@@ -1502,6 +1849,13 @@ function ReviewPlansPage({
                     <div>
                       <strong>{task.title}</strong>
                       <span>{task.date} · {task.completed ? "已完成" : "待完成"}</span>
+                      {task.knowledge_point_id || task.material_id || task.wrong_question_id ? (
+                        <span>
+                          {task.knowledge_point_id ? `知识点 ${task.knowledge_point_id}` : ""}
+                          {task.material_id ? ` · 资料 ${task.material_id}` : ""}
+                          {task.wrong_question_id ? ` · 错题 ${task.wrong_question_id}` : ""}
+                        </span>
+                      ) : null}
                       <p className="task-content">{task.content}</p>
                     </div>
                   </div>
@@ -1509,6 +1863,73 @@ function ReviewPlansPage({
               </div>
             </article>
           ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function StructuredArtifacts({ structured }: { structured: MaterialStructured }) {
+  const figures = structured.figures ?? [];
+  const tables = structured.tables ?? [];
+  const formulas = structured.formulas ?? [];
+
+  if (!figures.length && !tables.length && !formulas.length) {
+    return null;
+  }
+
+  return (
+    <div className="artifact-grid">
+      {figures.length ? <InfoList title="图片/图形说明" items={figures.slice(0, 4).map((item) => item.description)} /> : null}
+      {tables.length ? <InfoList title="表格" items={tables.slice(0, 3).map((item) => item.title || item.content)} /> : null}
+      {formulas.length ? <InfoList title="公式" items={formulas.slice(0, 4).map((item) => `${item.expression}${item.explanation ? `：${item.explanation}` : ""}`)} /> : null}
+    </div>
+  );
+}
+
+function AiUsagePage({
+  summary,
+  logs,
+  onRefresh
+}: {
+  summary: AiUsageSummary | null;
+  logs: AiUsageLogItem[];
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="grid dashboard-grid">
+      <MetricCard icon={Bot} label="总调用次数" value={summary?.total_calls ?? 0} hint="total_calls" />
+      <MetricCard icon={Sparkles} label="Prompt Tokens" value={formatCompactNumber(summary?.prompt_tokens ?? 0)} hint="prompt_tokens" />
+      <MetricCard icon={MessageSquare} label="Completion Tokens" value={formatCompactNumber(summary?.completion_tokens ?? 0)} hint="completion_tokens" />
+      <MetricCard icon={Download} label="估算费用" value={formatMoney(summary?.estimated_cost, summary?.currency)} hint={summary?.billing_policy_version ?? "billing policy"} />
+
+      <section className="panel wide">
+        <PanelTitle icon={Bot} title="按功能统计" />
+        <div className="quick-actions">
+          <button onClick={onRefresh}><RefreshCw size={16} />刷新用量</button>
+        </div>
+        <div className="usage-grid">
+          {summary?.by_feature.length ? summary.by_feature.map((item) => (
+            <article className="usage-card" key={item.feature}>
+              <strong>{item.feature}</strong>
+              <span>{item.calls} 次调用 · {formatCompactNumber(item.total_tokens)} tokens</span>
+              <small>{formatMoney(item.estimated_cost, item.currency)}</small>
+            </article>
+          )) : <p className="muted-text">暂无 AI 调用统计。</p>}
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <PanelTitle icon={FileText} title="最近调用日志" />
+        <div className="admin-table usage-table">
+          {logs.length ? logs.map((log) => (
+            <div key={log.id}>
+              <span>{log.feature}</span>
+              <span>{log.status}</span>
+              <span>{formatCompactNumber(log.total_tokens ?? 0)} tokens</span>
+              <span>{formatMoney(log.estimated_cost, log.currency)} · {log.model ?? log.provider}</span>
+            </div>
+          )) : <p className="muted-text">暂无调用日志。</p>}
         </div>
       </section>
     </div>
@@ -1537,7 +1958,7 @@ function AdminPage({
               <span>{material.original_filename}</span>
               <span>{material.file_type}</span>
               <StatusBadge status={material.parse_status} />
-              <span>{material.parse_error || "无异常"}</span>
+              <span>{material.parse_error || material.parse_warning || "无异常"}</span>
             </div>
           ))}
         </div>
@@ -1597,9 +2018,13 @@ function InfoList({ title, items }: { title: string; items: string[] }) {
   return (
     <div>
       <strong>{title}</strong>
-      <ul className="clean-list">
-        {items.map((item) => <li key={item}>{item}</li>)}
-      </ul>
+      {items.length ? (
+        <ul className="clean-list">
+          {items.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : (
+        <p className="muted-text">暂无数据。</p>
+      )}
     </div>
   );
 }
@@ -1624,6 +2049,7 @@ function pageTitle(view: View) {
     results: "自测结果页",
     wrong: "错题本页",
     plans: "复习计划页",
+    usage: "AI 用量与计费",
     admin: "管理员端"
   };
   return titles[view];
@@ -1638,6 +2064,18 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatCompactNumber(value: number | string) {
+  const numeric = Number(value) || 0;
+  if (numeric >= 1000000) return `${(numeric / 1000000).toFixed(1)}M`;
+  if (numeric >= 1000) return `${(numeric / 1000).toFixed(1)}K`;
+  return String(numeric);
+}
+
+function formatMoney(value: number | string | null | undefined, currency = "USD") {
+  const numeric = Number(value) || 0;
+  return `${numeric.toFixed(4)} ${currency}`;
 }
 
 function formatAnswer(values: string[]) {

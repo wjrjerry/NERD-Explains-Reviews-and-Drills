@@ -1,7 +1,11 @@
 import type {
+  AiUsageLogItem,
+  AiUsageSummary,
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgePointMastery,
+  KnowledgePointMaterials,
   KnowledgeResult,
   Material,
   MaterialPreview,
@@ -27,6 +31,27 @@ type Pagination<T> = {
   total: number;
   page: number;
   page_size: number;
+};
+
+type KnowledgeExtractScope =
+  | { materialId: number; targetId?: never; forceRegenerate?: never }
+  | { targetId: number; materialId?: never; forceRegenerate?: boolean };
+
+type QaScope = {
+  materialId?: number;
+  targetId?: number;
+  knowledgePointId?: number;
+  question: string;
+};
+
+type QuestionGenerateScope = {
+  materialId?: number;
+  targetId?: number;
+  knowledgePointIds?: number[];
+  extraRequirement?: string;
+  count: number;
+  difficulty: Difficulty;
+  questionTypes: QuestionType[];
 };
 
 export function getToken() {
@@ -100,6 +125,17 @@ function buildUrl(path: string) {
   return `${API_BASE}${normalizedPath}`;
 }
 
+function buildQuery(params: Record<string, string | number | boolean | null | undefined>) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== "") {
+      query.set(key, String(value));
+    }
+  });
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
 function readErrorMessage(payload: unknown) {
   if (!payload || typeof payload !== "object") {
     return "请求失败";
@@ -159,9 +195,10 @@ export const api = {
   listMaterials: (page = 1, pageSize = 20, targetId?: number) =>
     request<Pagination<Material>>(`/materials?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}`),
   getMaterial: (materialId: number) => request<{ material: Material }>(`/materials/${materialId}`),
-  uploadMaterial: (targetId: number, file: File) => {
+  uploadMaterial: (targetId: number, file: File, autoParse = true) => {
     const form = new FormData();
     form.append("target_id", String(targetId));
+    form.append("auto_parse", String(autoParse));
     form.append("file", file);
     return request<{ material: Material }>("/materials", { method: "POST", body: form });
   },
@@ -171,10 +208,17 @@ export const api = {
   getMaterialStructured: (materialId: number) => request<MaterialStructured>(`/materials/${materialId}/structured`),
   deleteMaterial: (materialId: number) => request<Record<string, never>>(`/materials/${materialId}`, { method: "DELETE" }),
 
-  extractKnowledge: (materialId: number) =>
+  getTargetChunks: (targetId: number, limit = 200) =>
+    request<{ target_id: number; chunks: MaterialStructured["chunks"] }>(`/study-targets/${targetId}/chunks${buildQuery({ limit })}`),
+
+  extractKnowledge: (scope: KnowledgeExtractScope) =>
     request<KnowledgeResult>("/knowledge/extract", {
       method: "POST",
-      body: JSON.stringify({ material_id: materialId })
+      body: JSON.stringify(
+        "targetId" in scope
+          ? { target_id: scope.targetId, force_regenerate: scope.forceRegenerate ?? true }
+          : { material_id: scope.materialId }
+      )
     }),
   getKnowledgeGraph: (targetId: number) => request<KnowledgeGraph>(`/knowledge-graphs/${targetId}`),
   generateKnowledgeGraph: (targetId: number, maxPoints = 20) =>
@@ -182,20 +226,46 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ target_id: targetId, force_regenerate: true, max_points: maxPoints })
     }),
+  listKnowledgePointMaterials: (knowledgePointId: number) =>
+    request<KnowledgePointMaterials>(`/knowledge-points/${knowledgePointId}/materials`),
+  listKnowledgePointQuestions: (knowledgePointId: number, page = 1, pageSize = 10) =>
+    request<Pagination<Question>>(`/knowledge-points/${knowledgePointId}/questions${buildQuery({ page, page_size: pageSize })}`),
+  listKnowledgePointWrongQuestions: (knowledgePointId: number, page = 1, pageSize = 10) =>
+    request<Pagination<WrongQuestion>>(
+      `/knowledge-points/${knowledgePointId}/wrong-questions${buildQuery({ page, page_size: pageSize })}`
+    ),
+  updateKnowledgePointMastery: (knowledgePointId: number, masteryStatus: WrongQuestion["mastery_status"]) =>
+    request<KnowledgePointMastery>(`/knowledge-points/${knowledgePointId}/mastery`, {
+      method: "PATCH",
+      body: JSON.stringify({ mastery_status: masteryStatus })
+    }),
 
-  askQuestion: (materialId: number, question: string) =>
-    request<QaRecord>("/qa/ask", { method: "POST", body: JSON.stringify({ material_id: materialId, question }) }),
-  listQaHistory: (page = 1, pageSize = 10, materialId?: number) =>
-    request<Pagination<QaRecord>>(`/qa/history?page=${page}&page_size=${pageSize}${materialId ? `&material_id=${materialId}` : ""}`),
-
-  generateQuestions: (materialId: number, count: number, difficulty: Difficulty, questionTypes: QuestionType[]) =>
-    request<{ material_id: number; questions: Question[] }>("/questions/generate", {
+  askQuestion: (scope: QaScope) =>
+    request<QaRecord>("/qa/ask", {
       method: "POST",
       body: JSON.stringify({
-        material_id: materialId,
-        question_types: questionTypes,
-        difficulty,
-        count
+        material_id: scope.materialId,
+        target_id: scope.targetId,
+        knowledge_point_id: scope.knowledgePointId,
+        question: scope.question
+      })
+    }),
+  listQaHistory: (page = 1, pageSize = 10, materialId?: number, targetId?: number) =>
+    request<Pagination<QaRecord>>(
+      `/qa/history${buildQuery({ page, page_size: pageSize, material_id: materialId, target_id: targetId })}`
+    ),
+
+  generateQuestions: (scope: QuestionGenerateScope) =>
+    request<{ material_id?: number | null; target_id?: number | null; questions: Question[] }>("/questions/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        material_id: scope.materialId,
+        target_id: scope.targetId,
+        knowledge_point_ids: scope.knowledgePointIds ?? [],
+        extra_requirement: scope.extraRequirement || undefined,
+        question_types: scope.questionTypes,
+        difficulty: scope.difficulty,
+        count: scope.count
       })
     }),
 
@@ -209,9 +279,15 @@ export const api = {
       `/tests/records?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}${materialId ? `&material_id=${materialId}` : ""}`
     ),
 
-  listWrongQuestions: (page = 1, pageSize = 10, targetId?: number, materialId?: number) =>
+  listWrongQuestions: (page = 1, pageSize = 10, targetId?: number, materialId?: number, knowledgePointId?: number) =>
     request<Pagination<WrongQuestion>>(
-      `/wrong-questions?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}${materialId ? `&material_id=${materialId}` : ""}`
+      `/wrong-questions${buildQuery({
+        page,
+        page_size: pageSize,
+        target_id: targetId,
+        material_id: materialId,
+        knowledge_point_id: knowledgePointId
+      })}`
     ),
   getWrongQuestion: (wrongQuestionId: number) => request<WrongQuestion>(`/wrong-questions/${wrongQuestionId}`),
   updateWrongQuestionMastery: (wrongQuestionId: number, masteryStatus: WrongQuestion["mastery_status"]) =>
@@ -227,6 +303,13 @@ export const api = {
     }),
   listReviewPlans: (page = 1, pageSize = 20, targetId?: number) =>
     request<Pagination<ReviewPlan>>(`/review-plans?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}`),
+
+  getAiUsageSummary: (targetId?: number, materialId?: number) =>
+    request<AiUsageSummary>(`/ai-usage/summary${buildQuery({ target_id: targetId, material_id: materialId })}`),
+  listAiUsageLogs: (page = 1, pageSize = 20, targetId?: number, materialId?: number) =>
+    request<Pagination<AiUsageLogItem>>(
+      `/ai-usage/logs${buildQuery({ page, page_size: pageSize, target_id: targetId, material_id: materialId })}`
+    ),
 
   exportWrongQuestions: (targetId?: number, materialId?: number) =>
     download(

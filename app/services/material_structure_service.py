@@ -25,8 +25,12 @@ class MaterialStructureService:
         re.compile(r"^#{1,6}\s+(.+)$"),
         re.compile(r"^(第[一二三四五六七八九十百千万0-9]+[章节篇单元][：:\s]?.*)$"),
         re.compile(r"^(\d+(?:\.\d+){0,3}[、.)\s]+.{2,80})$"),
+        re.compile(r"^(\d+(?:\.\d+){1,3}\s*[A-Z][A-Za-z0-9 _:/-]{2,80})$"),
     ]
-    formula_pattern = re.compile(r"(=|≈|≤|≥|≠|√|∑|∫|\^|\\frac|\\sqrt|[a-zA-Z]\s*[+\-*/]\s*[a-zA-Z0-9])")
+    formula_label_pattern = re.compile(r"^(公式|方程|表达式|推导)[：:]")
+    formula_symbol_pattern = re.compile(r"(≈|≤|≥|≠|√|∑|∫|\^|\\frac|\\sqrt)")
+    formula_operator_pattern = re.compile(r"([A-Za-z0-9)\]}]\s*[+\-*/=]\s*[A-Za-z0-9({\[])")
+    grammar_production_pattern = re.compile(r"^\s*\S{1,20}\s*(->|→|⇒|::=)\s*\S+")
     definition_keywords = ("定义", "概念", "称为", "是指", "叫做")
     example_keywords = ("例题", "例 ", "例：", "例:", "练习", "题目", "解：")
     key_sentence_keywords = ("重点", "注意", "必须", "核心", "关键", "考点", "结论")
@@ -86,11 +90,53 @@ class MaterialStructureService:
             return MaterialChunkType.example
         if any(keyword in compact for keyword in MaterialStructureService.definition_keywords):
             return MaterialChunkType.definition
-        if MaterialStructureService.formula_pattern.search(compact):
+        if MaterialStructureService._is_formula_like(compact):
             return MaterialChunkType.formula
         if any(keyword in compact for keyword in MaterialStructureService.key_sentence_keywords):
             return MaterialChunkType.key_sentence
         return MaterialChunkType.text
+
+    @staticmethod
+    def _is_formula_like(text: str) -> bool:
+        """Heuristically detect standalone formulas without tagging mixed prose.
+
+        A pure regex cannot fully understand slides, code snippets, grammar rules,
+        and math. This intentionally favors precision over recall: long prose that
+        merely contains an operator stays text, while short symbolic blocks and
+        labeled formulas become formula chunks.
+        """
+        compact = text.strip()
+        if not compact:
+            return False
+        if MaterialStructureService.formula_label_pattern.match(compact):
+            return True
+
+        lines = [line.strip() for line in compact.splitlines() if line.strip()]
+        if not lines:
+            return False
+
+        formula_lines = sum(
+            1 for line in lines if MaterialStructureService._is_formula_line(line)
+        )
+        if len(lines) >= 2:
+            return formula_lines / len(lines) >= 0.6
+
+        return len(compact) <= 260 and formula_lines == 1
+
+    @staticmethod
+    def _is_formula_line(line: str) -> bool:
+        if MaterialStructureService.formula_symbol_pattern.search(line):
+            return True
+        if MaterialStructureService.grammar_production_pattern.search(line):
+            return True
+        if not MaterialStructureService.formula_operator_pattern.search(line):
+            return False
+
+        words = re.findall(r"[A-Za-z\u4e00-\u9fff]{2,}", line)
+        symbol_chars = sum(1 for char in line if char in "=+-*/^()[]{}<>→⇒≈≤≥≠√∑∫|")
+        symbolic_ratio = symbol_chars / max(len(line), 1)
+
+        return len(line) <= 180 and len(words) <= 12 and symbolic_ratio >= 0.05
 
     @staticmethod
     def _split_labeled_items(text: str) -> list[str]:
@@ -223,7 +269,7 @@ class MaterialStructureService:
                 material_id=material.id,
                 section=section,
                 chunk_type=MaterialStructureService._classify_chunk(text),
-                title=section.title,
+                title=MaterialStructureService._chunk_title(section),
                 text=text,
                 order_index=order_index,
             )
@@ -235,6 +281,12 @@ class MaterialStructureService:
             default_section,
         )
         return sections, chunks, figures, tables, formulas
+
+    @staticmethod
+    def _chunk_title(section: MaterialSection) -> str | None:
+        if section.title == MaterialStructureService.default_section_title:
+            return None
+        return section.title
 
     @staticmethod
     async def rebuild_for_material(
