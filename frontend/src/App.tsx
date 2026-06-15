@@ -144,6 +144,7 @@ function App() {
   const [wrongQuestions, setWrongQuestions] = useState<WrongQuestion[]>([]);
   const [reviewPlans, setReviewPlans] = useState<ReviewPlan[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
+  const [targetKnowledge, setTargetKnowledge] = useState<KnowledgeResult | null>(null);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
   const [structured, setStructured] = useState<MaterialStructured | null>(null);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
@@ -156,6 +157,7 @@ function App() {
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
   const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
   const [questionBatchContext, setQuestionBatchContext] = useState<QuestionBatchContext | null>(null);
+  const [knowledgeRefreshing, setKnowledgeRefreshing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const parsePollAttemptsRef = useRef<Map<number, number>>(new Map());
@@ -238,6 +240,7 @@ function App() {
     setQuestionBatchContext(null);
     setQuestions([]);
     setTestResult(null);
+    setTargetKnowledge(null);
 
     const currentMaterialStillInTarget = materials.some(
       (material) => material.id === selectedMaterialId && material.target_id === targetId
@@ -273,15 +276,18 @@ function App() {
   useEffect(() => {
     if (!selectedTargetId || !user) {
       setKnowledgeGraph(null);
+      setTargetKnowledge(null);
       return;
     }
 
     void Promise.all([
       api.getKnowledgeGraph(selectedTargetId).catch(() => null),
-      api.listTestRecords(1, 10, selectedTargetId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
-    ]).then(([graphData, recordData]) => {
-      setKnowledgeGraph(graphData);
+      api.listTestRecords(1, 10, selectedTargetId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
+      api.getLatestKnowledge({ targetId: selectedTargetId }).catch(() => null)
+    ]).then(([graphData, recordData, extractionData]) => {
+      setKnowledgeGraph(extractionData?.knowledge_graph ?? graphData);
       setTestRecords(recordData.items);
+      setTargetKnowledge(extractionData);
     });
   }, [selectedTargetId, user]);
 
@@ -384,12 +390,13 @@ function App() {
 
   async function loadMaterialContext(materialId: number) {
     try {
-      const [detailData, previewData, sourceFileBlob, structuredData, qaHistoryData] = await Promise.all([
+      const [detailData, previewData, sourceFileBlob, structuredData, qaHistoryData, extractionData] = await Promise.all([
         api.getMaterial(materialId),
         api.getMaterialPreview(materialId).catch(() => null),
         api.getMaterialFile(materialId).catch(() => null),
         api.getMaterialStructured(materialId).catch(() => null),
-        api.listQaHistory(1, 10, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
+        api.listQaHistory(1, 10, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
+        api.getLatestKnowledge({ materialId }).catch(() => null)
       ]);
 
       setMaterials((current) => current.map((item) => (item.id === materialId ? detailData.material : item)));
@@ -408,6 +415,7 @@ function App() {
       }
       setStructured(structuredData);
       setQaRecords(qaHistoryData.items);
+      setKnowledge(extractionData);
     } catch (error) {
       setPreview(null);
       setSourcePreview(null);
@@ -419,14 +427,16 @@ function App() {
 
   async function refreshMaterialLearningContext(material: Material) {
     if (selectedMaterialId === material.id) {
-      const [previewData, structuredData, qaHistoryData] = await Promise.all([
+      const [previewData, structuredData, qaHistoryData, materialExtraction] = await Promise.all([
         api.getMaterialPreview(material.id).catch(() => null),
         api.getMaterialStructured(material.id).catch(() => null),
-        api.listQaHistory(1, 10, material.id).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
+        api.listQaHistory(1, 10, material.id).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
+        api.getLatestKnowledge({ materialId: material.id }).catch(() => null)
       ]);
       setPreview(previewData);
       setStructured(structuredData);
       setQaRecords(qaHistoryData.items);
+      setKnowledge(materialExtraction);
     }
 
     const [graphData, extractionData] = await Promise.all([
@@ -437,7 +447,13 @@ function App() {
     if (selectedTargetId === material.target_id || selectedMaterialId === material.id) {
       setKnowledgeGraph(extractionData?.knowledge_graph ?? graphData);
       if (extractionData) {
-        setKnowledge(extractionData);
+        setTargetKnowledge(extractionData);
+      }
+    }
+    if (selectedMaterialId === material.id) {
+      const refreshedMaterialExtraction = await api.getLatestKnowledge({ materialId: material.id }).catch(() => null);
+      if (refreshedMaterialExtraction) {
+        setKnowledge(refreshedMaterialExtraction);
       }
     }
   }
@@ -645,34 +661,35 @@ function App() {
     }
   }
 
-  async function handleExtractKnowledge(scope: "material" | "target" = "material") {
-    if (scope === "target") {
-      if (!selectedTargetId) {
-        setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
-        return;
-      }
-
-      try {
-        const data = await api.extractKnowledge({ targetId: selectedTargetId, forceRegenerate: true });
-        setKnowledge(data);
-        const graph = await api.getKnowledgeGraph(selectedTargetId).catch(() => null);
-        setKnowledgeGraph(graph);
-        setNotice({ tone: "success", text: "目标级知识提炼已刷新。" });
-      } catch (error) {
-        setNotice({ tone: "danger", text: `目标级知识提炼失败：${readMessage(error)}` });
-      }
-      return;
-    }
-
+  async function handleRefreshSelectedMaterialKnowledge() {
     if (!selectedMaterial) {
       return;
     }
+    if (selectedMaterial.parse_status === "parsing") {
+      setNotice({ tone: "info", text: "资料仍在解析中，请等待完成后再重新提炼。" });
+      return;
+    }
+    if (selectedMaterial.parse_status !== "parsed") {
+      await handleParseMaterial(selectedMaterial.id);
+      return;
+    }
+
+    setKnowledgeRefreshing(true);
+    setNotice({ tone: "info", text: "正在更新资料知识提炼和目标图谱..." });
     try {
-      const data = await api.extractKnowledge({ materialId: selectedMaterial.id });
-      setKnowledge(data);
-      setNotice({ tone: "success", text: "知识提炼完成。" });
+      const materialData = await api.extractKnowledge({ materialId: selectedMaterial.id });
+      const targetData = await api.extractKnowledge({ targetId: selectedMaterial.target_id, forceRegenerate: true });
+      setKnowledge(materialData);
+      setTargetKnowledge(targetData);
+      setKnowledgeGraph(
+        targetData.knowledge_graph ??
+          (await api.getKnowledgeGraph(selectedMaterial.target_id).catch(() => null))
+      );
+      setNotice({ tone: "success", text: "知识提炼和图谱已更新。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `知识提炼失败：${readMessage(error)}` });
+    } finally {
+      setKnowledgeRefreshing(false);
     }
   }
 
@@ -812,13 +829,21 @@ function App() {
       return;
     }
 
+    setKnowledgeRefreshing(true);
+    setNotice({ tone: "info", text: "正在重新提炼目标并刷新知识图谱..." });
     try {
-      const graph = await api.generateKnowledgeGraph(selectedTargetId);
-      setKnowledgeGraph(graph);
+      const extractionData = await api.extractKnowledge({ targetId: selectedTargetId, forceRegenerate: true });
+      setTargetKnowledge(extractionData);
+      setKnowledgeGraph(
+        extractionData.knowledge_graph ??
+          (await api.getKnowledgeGraph(selectedTargetId).catch(() => null))
+      );
       setView("graph");
-      setNotice({ tone: "success", text: "知识图谱已生成。" });
+      setNotice({ tone: "success", text: "目标级知识提炼和知识图谱已刷新。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `知识图谱生成失败：${readMessage(error)}` });
+    } finally {
+      setKnowledgeRefreshing(false);
     }
   }
 
@@ -870,6 +895,7 @@ function App() {
     setWrongQuestions([]);
     setReviewPlans([]);
     setKnowledge(null);
+    setTargetKnowledge(null);
     setKnowledgeGraph(null);
     setStructured(null);
     setTestRecords([]);
@@ -997,14 +1023,8 @@ function App() {
             sourcePreview={sourcePreview}
             structured={structured}
             knowledge={knowledge}
-            onParse={() => {
-              if (selectedMaterial) {
-                void handleParseMaterial(selectedMaterial.id);
-              }
-            }}
-            onExtractMaterial={() => void handleExtractKnowledge("material")}
-            onExtractTarget={() => void handleExtractKnowledge("target")}
-            onGenerateGraph={handleGenerateKnowledgeGraph}
+            knowledgeRefreshing={knowledgeRefreshing}
+            onRefreshKnowledge={() => void handleRefreshSelectedMaterialKnowledge()}
             onExportKnowledge={() => {
               if (selectedTargetId) {
                 void handleExport(() => api.exportKnowledgeSummary(selectedTargetId), "知识总结已开始下载。");
@@ -1024,6 +1044,8 @@ function App() {
             selectedMaterialId={selectedMaterialId}
             target={selectedTarget}
             graph={knowledgeGraph}
+            targetKnowledge={targetKnowledge}
+            knowledgeRefreshing={knowledgeRefreshing}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onGenerate={handleGenerateKnowledgeGraph}
@@ -1500,10 +1522,8 @@ function MaterialDetailPage({
   sourcePreview,
   structured,
   knowledge,
-  onParse,
-  onExtractMaterial,
-  onExtractTarget,
-  onGenerateGraph,
+  knowledgeRefreshing,
+  onRefreshKnowledge,
   onExportKnowledge,
   onJumpToQa,
   onJumpToPractice,
@@ -1515,10 +1535,8 @@ function MaterialDetailPage({
   sourcePreview: MaterialSourcePreview | null;
   structured: MaterialStructured | null;
   knowledge: KnowledgeResult | null;
-  onParse: () => void;
-  onExtractMaterial: () => void;
-  onExtractTarget: () => void;
-  onGenerateGraph: () => void;
+  knowledgeRefreshing: boolean;
+  onRefreshKnowledge: () => void;
   onExportKnowledge: () => void;
   onJumpToQa: () => void;
   onJumpToPractice: () => void;
@@ -1553,10 +1571,10 @@ function MaterialDetailPage({
             </p>
           </div>
           <div className="quick-actions">
-            <button disabled={material.parse_status === "parsing"} onClick={onParse}><RefreshCw size={16} />解析资料</button>
-            <button disabled={aiDisabled} onClick={onExtractMaterial}><Sparkles size={16} />资料提炼</button>
-            <button disabled={!target} onClick={onExtractTarget}><Sparkles size={16} />目标提炼</button>
-            <button disabled={aiDisabled} onClick={onGenerateGraph}><Network size={16} />生成图谱</button>
+            <button disabled={material.parse_status === "parsing" || knowledgeRefreshing} onClick={onRefreshKnowledge}>
+              {knowledgeRefreshing || material.parse_status === "parsing" ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+              {knowledgeRefreshing || material.parse_status === "parsing" ? "处理中" : "重新提炼"}
+            </button>
             <button disabled={!target} onClick={onExportKnowledge}><Download size={16} />导出总结</button>
             <button disabled={aiDisabled} onClick={onJumpToQa}><MessageSquare size={16} />AI 问答</button>
             <button disabled={aiDisabled} onClick={onJumpToPractice}><ClipboardCheck size={16} />AI 出题</button>
@@ -1604,10 +1622,10 @@ function MaterialDetailPage({
       </section>
 
       <section className="panel">
-        <PanelTitle icon={Bot} title="知识提炼结果" />
+        <PanelTitle icon={Bot} title="资料级知识提炼结果" />
         {knowledge ? (
           <div className="detail-stack">
-            {knowledge.scope ? <span className="subtle-pill">{knowledge.scope === "target" ? "目标级知识提炼" : "资料级知识提炼"}</span> : null}
+            <span className="subtle-pill">资料级知识提炼</span>
             <p>{knowledge.summary}</p>
             <InfoList title="提纲" items={knowledge.outline} />
             <InfoList title="关键词" items={knowledge.keywords} />
@@ -1770,6 +1788,8 @@ function KnowledgeGraphPage({
   selectedMaterialId,
   target,
   graph,
+  targetKnowledge,
+  knowledgeRefreshing,
   onSelectTarget,
   onSelectMaterial,
   onGenerate,
@@ -1785,6 +1805,8 @@ function KnowledgeGraphPage({
   selectedMaterialId: number | null;
   target: StudyTarget | null;
   graph: KnowledgeGraph | null;
+  targetKnowledge: KnowledgeResult | null;
+  knowledgeRefreshing: boolean;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
   onGenerate: () => void;
@@ -1802,14 +1824,53 @@ function KnowledgeGraphPage({
     wrongQuestions: WrongQuestion[];
     error: string | null;
   }>({ loading: false, materials: [], questions: [], wrongQuestions: [], error: null });
-  const activeNode = graph?.nodes.find((node) => node.id === activeId) ?? graph?.nodes[0] ?? null;
+  const graphNodes = useMemo(() => {
+    const allNodes = graph?.nodes ?? [];
+    if (!selectedMaterialId) {
+      return allNodes;
+    }
+
+    const nodeMap = new Map(allNodes.map((node) => [node.id, node]));
+    const visibleIds = new Set<number>();
+
+    allNodes
+      .filter((node) => node.materials.some((item) => item.material_id === selectedMaterialId))
+      .forEach((node) => {
+        visibleIds.add(node.id);
+        let parentId = node.parent_id;
+        while (parentId) {
+          visibleIds.add(parentId);
+          parentId = nodeMap.get(parentId)?.parent_id ?? null;
+        }
+      });
+
+    return allNodes.filter((node) => visibleIds.has(node.id));
+  }, [graph?.nodes, selectedMaterialId]);
+  const selectedGraphMaterial = selectedMaterialId
+    ? materials.find((material) => material.id === selectedMaterialId) ?? null
+    : null;
+  const directlyLinkedNodeIds = useMemo(
+    () =>
+      new Set(
+        selectedMaterialId
+          ? (graph?.nodes ?? [])
+              .filter((node) => node.materials.some((item) => item.material_id === selectedMaterialId))
+              .map((node) => node.id)
+          : (graph?.nodes ?? []).map((node) => node.id)
+      ),
+    [graph?.nodes, selectedMaterialId]
+  );
+  const activeNode = graphNodes.find((node) => node.id === activeId) ?? graphNodes[0] ?? null;
   const graphLevels = Array.from(
-    new Set((graph?.nodes ?? []).map((node) => node.level))
+    new Set(graphNodes.map((node) => node.level))
   ).sort((left, right) => left - right);
+  const filteredDetailMaterials = selectedMaterialId
+    ? detail.materials.filter((item) => item.material_id === selectedMaterialId)
+    : detail.materials;
 
   useEffect(() => {
-    setActiveId(graph?.nodes[0]?.id ?? null);
-  }, [graph?.target_id, graph?.nodes.length]);
+    setActiveId(graphNodes[0]?.id ?? null);
+  }, [graph?.target_id, graphNodes]);
 
   useEffect(() => {
     if (!activeNode) {
@@ -1855,18 +1916,42 @@ function KnowledgeGraphPage({
         onSelectTarget={onSelectTarget}
         onSelectMaterial={onSelectMaterial}
       />
+      <section className="panel target-knowledge-panel">
+        <PanelTitle icon={Sparkles} title="目标级知识提炼" action={target?.title} />
+        {targetKnowledge ? (
+          <div className="detail-stack">
+            <p>{targetKnowledge.summary}</p>
+            <div className="knowledge-summary-columns">
+              <InfoList title="提纲" items={targetKnowledge.outline} />
+              <InfoList title="关键词" items={targetKnowledge.keywords} />
+              <InfoList title="重点" items={targetKnowledge.key_points} />
+              <InfoList title="考点" items={targetKnowledge.exam_points} />
+            </div>
+          </div>
+        ) : (
+          <p className="muted-text">当前目标还没有知识提炼结果。完成资料解析或刷新图谱后会自动显示。</p>
+        )}
+      </section>
       <div className="graph-content-grid">
       <section className="panel">
         <PanelTitle icon={Network} title="知识点图谱" action={target?.title} />
         <div className="quick-actions">
-          <button onClick={onGenerate}><RefreshCw size={16} />生成/刷新图谱</button>
+          <button disabled={knowledgeRefreshing} onClick={onGenerate}>
+            {knowledgeRefreshing ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
+            {knowledgeRefreshing ? "正在刷新" : "重新提炼并刷新图谱"}
+          </button>
           <button disabled={!target} onClick={onExport}><Download size={16} />导出知识总结</button>
           <button disabled={!target} onClick={onExportAnki}><Download size={16} />导出 Anki CSV</button>
         </div>
-        {graph?.nodes.length ? (
+        {selectedGraphMaterial ? (
+          <p className="form-hint">
+            当前按资料筛选：{selectedGraphMaterial.original_filename}。只显示该资料关联知识点及其上级节点。
+          </p>
+        ) : null}
+        {graphNodes.length ? (
           <div className="graph-canvas">
             {graphLevels.map((level) => {
-              const levelNodes = graph.nodes
+              const levelNodes = graphNodes
                 .filter((node) => node.level === level)
                 .sort((left, right) => left.sort_order - right.sort_order);
               return (
@@ -1878,13 +1963,13 @@ function KnowledgeGraphPage({
                   <div className="graph-level-nodes">
                     {levelNodes.map((node) => {
                       const parent = node.parent_id
-                        ? graph.nodes.find((item) => item.id === node.parent_id)
+                        ? graphNodes.find((item) => item.id === node.parent_id)
                         : null;
                       const size = Math.round(88 + Math.min(Math.max(node.importance_weight, 0), 1) * 52);
                       return (
                         <button
                           key={node.id}
-                          className={`graph-node ${node.mastery_status} ${activeNode?.id === node.id ? "selected" : ""}`}
+                          className={`graph-node ${node.mastery_status} ${activeNode?.id === node.id ? "selected" : ""} ${directlyLinkedNodeIds.has(node.id) ? "" : "context-node"}`}
                           style={{
                             width: `${size}px`,
                             minHeight: `${Math.round(size * 0.72)}px`
@@ -1894,7 +1979,7 @@ function KnowledgeGraphPage({
                         >
                           <strong>{node.name}</strong>
                           <span>重要度 {Math.round(node.importance_weight * 100)}%</span>
-                          <small>{parent ? `属于 ${parent.name}` : "核心节点"}</small>
+                          <small>{directlyLinkedNodeIds.has(node.id) ? (parent ? `属于 ${parent.name}` : "核心节点") : "上级节点"}</small>
                         </button>
                       );
                     })}
@@ -1904,7 +1989,7 @@ function KnowledgeGraphPage({
             })}
           </div>
         ) : (
-          <EmptyPanel text="当前目标还没有知识图谱，先生成图谱或完成资料解析。" />
+          <EmptyPanel text={selectedGraphMaterial ? "当前资料还没有关联到知识图谱节点，可重新提炼并刷新图谱。" : "当前目标还没有知识图谱，先生成图谱或完成资料解析。"} />
         )}
       </section>
 
@@ -1920,7 +2005,12 @@ function KnowledgeGraphPage({
               <span>错题 {activeNode.wrong_count}</span>
               <span>作答 {activeNode.answered_count}</span>
             </div>
-            <InfoList title="关联资料片段" items={activeNode.materials.map((item) => item.evidence_text || `资料 ${item.material_id}`)} />
+            <InfoList
+              title="关联资料片段"
+              items={activeNode.materials
+                .filter((item) => !selectedMaterialId || item.material_id === selectedMaterialId)
+                .map((item) => item.evidence_text || `资料 ${item.material_id}`)}
+            />
             <div className="quick-actions">
               <button onClick={() => onFocusQa(activeNode)}><MessageSquare size={16} />围绕此点提问</button>
               <button onClick={() => onFocusPractice(activeNode)}><ClipboardCheck size={16} />按此点出题</button>
@@ -1940,7 +2030,7 @@ function KnowledgeGraphPage({
             {detail.loading ? <p className="muted-text">正在加载知识点详情...</p> : null}
             {detail.error ? <p className="danger-text">{detail.error}</p> : null}
             <div className="knowledge-detail-scroll">
-              <InfoList title="精确关联资料" items={detail.materials.map((item) => `${item.original_filename}${item.evidence_text ? `：${item.evidence_text}` : ""}`)} />
+              <InfoList title="精确关联资料" items={filteredDetailMaterials.map((item) => `${item.original_filename}${item.evidence_text ? `：${item.evidence_text}` : ""}`)} />
               <InfoList title="关联题目" items={detail.questions.map((item) => item.stem)} />
               <InfoList title="关联错题" items={detail.wrongQuestions.map((item) => item.stem)} />
             </div>

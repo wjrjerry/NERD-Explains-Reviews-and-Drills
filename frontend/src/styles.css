@@ -1408,6 +1408,16 @@ blockquote {
   align-items: start;
 }
 
+.target-knowledge-panel {
+  min-width: 0;
+}
+
+.knowledge-summary-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .qa-compose-panel {
   align-content: start;
   min-width: 0;
@@ -1495,6 +1505,12 @@ blockquote {
 .graph-node.selected {
   outline: 3px solid rgba(0, 122, 255, 0.24);
   transform: translateY(-2px);
+}
+
+.graph-node.context-node {
+  opacity: 0.62;
+  border: 1px dashed rgba(31, 54, 88, 0.22);
+  box-shadow: none;
 }
 
 .graph-node strong {
@@ -1693,6 +1709,7 @@ blockquote {
   .qa-content-grid,
   .graph-content-grid,
   .context-fields,
+  .knowledge-summary-columns,
   .practice-form-grid,
   .material-library-toolbar,
   .option-grid,

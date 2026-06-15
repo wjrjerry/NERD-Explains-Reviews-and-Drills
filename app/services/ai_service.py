@@ -977,38 +977,68 @@ def generate_knowledge_graph(
     subject: str | None,
     materials: list[dict[str, object]],
     max_points: int,
+    existing_points: list[dict[str, object]] | None = None,
 ) -> dict[str, list[dict[str, object]]]:
-    """Generate a target-level knowledge graph from parsed materials."""
+    """Generate or update a target-level graph from parsed materials."""
     if settings.ai_provider != "mock":
         return _generate_knowledge_graph_with_real_ai(
             target_title=target_title,
             subject=subject,
             materials=materials,
+            existing_points=existing_points or [],
             max_points=max_points,
         )
 
     joined_text = _normalize_text(
         " ".join(str(material.get("parsed_text", "")) for material in materials)
     )
-    keywords = _extract_mock_keywords(joined_text)[:max_points]
+    existing_names = [
+        str(point.get("name", "")).strip()
+        for point in (existing_points or [])
+        if str(point.get("name", "")).strip()
+    ]
+    extracted_keywords = _extract_mock_keywords(joined_text)
+    keywords = extracted_keywords + [
+        name for name in existing_names if name not in extracted_keywords
+    ]
+    keywords = keywords[:max_points]
     if not keywords:
         keywords = [target_title or subject or "复习重点"]
 
     points: list[dict[str, object]] = []
     for index, keyword in enumerate(keywords):
-        material = materials[index % len(materials)]
+        material = next(
+            (
+                item
+                for item in materials
+                if keyword.casefold() in str(item.get("parsed_text", "")).casefold()
+            ),
+            materials[index % len(materials)],
+        )
         material_id = int(material["material_id"])
         snippet = _select_reference_snippet(
             str(material.get("parsed_text", "")),
             keyword,
         )
+        existing = next(
+            (
+                point
+                for point in (existing_points or [])
+                if str(point.get("name", "")).strip() == keyword
+            ),
+            {},
+        )
         points.append(
             {
                 "name": keyword,
-                "description": f"围绕「{keyword}」整理定义、应用场景和常见考法。",
-                "importance_weight": max(0.35, 1.0 - index * 0.08),
-                "parent_name": None,
-                "level": 1,
+                "description": existing.get("description")
+                or f"围绕「{keyword}」整理定义、应用场景和常见考法。",
+                "importance_weight": existing.get(
+                    "importance_weight",
+                    max(0.35, 1.0 - index * 0.08),
+                ),
+                "parent_name": existing.get("parent_name"),
+                "level": existing.get("level", 1),
                 "sort_order": index + 1,
                 "evidence": [
                     {
@@ -1029,8 +1059,9 @@ def _generate_knowledge_graph_with_real_ai(
     subject: str | None,
     materials: list[dict[str, object]],
     max_points: int,
+    existing_points: list[dict[str, object]],
 ) -> dict[str, list[dict[str, object]]]:
-    """Ask the configured real LLM to build a target-level knowledge graph."""
+    """Ask the configured real LLM to update a target-level knowledge graph."""
     material_blocks = []
     for material in materials:
         material_blocks.append(
@@ -1042,16 +1073,25 @@ def _generate_knowledge_graph_with_real_ai(
         )
 
     system_prompt = (
-        "你是一个备考知识图谱构建助手。请根据多份课程资料，抽取目标级知识点。"
+        "你是一个备考知识图谱维护助手。请根据已有图谱和多份课程资料，更新目标级知识点。"
         "必须返回严格 JSON 对象，不要返回 Markdown、解释文字或代码块。"
     )
     user_prompt = (
         "学习目标：\n"
         f"- 标题：{target_title}\n"
         f"- 科目：{subject or '未提供'}\n\n"
+        "已有知识图谱 JSON：\n"
+        f"{json.dumps(existing_points, ensure_ascii=False)}\n\n"
         "资料列表 JSON：\n"
         f"{json.dumps(material_blocks, ensure_ascii=False)}\n\n"
-        "请生成知识点图谱，最多 "
+        "请在已有知识图谱基础上更新，而不是从零重建。"
+        "已有知识点仍然成立时必须复用其原 name，不要仅因措辞不同创建重复节点；"
+        "可以根据新资料补充新知识点、更新描述、重要度、层级和资料证据。"
+        "请优先返回新资料引入的新知识点，以及资料证据或属性需要更新的已有知识点，"
+        "不需要机械重复所有没有变化的旧知识点。"
+        "对每个返回知识点都要重新检查资料列表中的每一份资料，"
+        "evidence 应列出所有实际相关的资料，而不只是最近上传的资料。"
+        "返回的 points 应包含需要新增或更新的知识点，最多 "
         f"{max_points} 个节点。返回 JSON 对象，字段为 points。"
         "points 是数组，每个元素包含：\n"
         "- name: 知识点名称。\n"

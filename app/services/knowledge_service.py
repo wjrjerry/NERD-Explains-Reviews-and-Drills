@@ -191,6 +191,61 @@ async def extract_knowledge(
     )
 
 
+async def get_latest_knowledge(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    scope: KnowledgeExtractionScope,
+    target_id: int | None = None,
+    material_id: int | None = None,
+) -> KnowledgeExtractResponse:
+    """Return the newest stored extraction without starting a new AI call."""
+    if scope == KnowledgeExtractionScope.material:
+        if material_id is None:
+            raise ValueError("资料级知识提炼需要提供 material_id")
+        material = await MaterialRepository.get_by_id(
+            db,
+            material_id=material_id,
+            user_id=current_user.id,
+        )
+        if material is None:
+            raise ValueError("资料不存在")
+        row = await KnowledgeRepository.get_latest(
+            db,
+            user_id=current_user.id,
+            scope=ModelScope.material,
+            material_id=material_id,
+        )
+    else:
+        if target_id is None:
+            raise ValueError("目标级知识提炼需要提供 target_id")
+        target = await StudyTargetRepository.get_by_id(
+            db,
+            target_id=target_id,
+            user_id=current_user.id,
+        )
+        if target is None:
+            raise ValueError("课程/考试目标不存在")
+        row = await KnowledgeRepository.get_latest(
+            db,
+            user_id=current_user.id,
+            scope=ModelScope.target,
+            target_id=target_id,
+        )
+
+    if row is None:
+        raise LookupError("暂无知识提炼结果")
+
+    graph = None
+    if scope == KnowledgeExtractionScope.target and target_id is not None:
+        graph = await KnowledgeGraphService.get_graph(
+            db,
+            current_user=current_user,
+            target_id=target_id,
+        )
+    return _to_response(row, knowledge_graph=graph)
+
+
 async def run_after_material_parsed(
     db: AsyncSession,
     *,

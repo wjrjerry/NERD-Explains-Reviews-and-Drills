@@ -244,6 +244,12 @@ export const api = {
             : scope
       )
     }),
+  getLatestKnowledge: (scope: { materialId: number; targetId?: never } | { targetId: number; materialId?: never }) =>
+    request<KnowledgeResult>(
+      "targetId" in scope
+        ? `/knowledge/latest${buildQuery({ scope: "target", target_id: scope.targetId })}`
+        : `/knowledge/latest${buildQuery({ scope: "material", material_id: scope.materialId })}`
+    ),
   getKnowledgeGraph: (targetId: number) => request<KnowledgeGraph>(`/knowledge-graphs/${targetId}`),
   generateKnowledgeGraph: (targetId: number, maxPoints = 20) =>
     request<KnowledgeGraph>("/knowledge-graphs/generate", {

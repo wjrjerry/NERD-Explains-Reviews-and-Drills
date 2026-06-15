@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
+import unicodedata
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +35,12 @@ class KnowledgePointCreateData:
 
 class KnowledgeGraphRepository:
     """Repository for knowledge points, material links, and mastery rows."""
+
+    @staticmethod
+    def _normalize_point_name(name: str) -> str:
+        """Build a stable key while preserving the user-facing point name."""
+        normalized = unicodedata.normalize("NFKC", name).casefold()
+        return re.sub(r"[\s\-_—–·•:：,，。/\\]+", "", normalized)
 
     @staticmethod
     async def list_points_by_target(
@@ -167,6 +175,137 @@ class KnowledgeGraphRepository:
         for row in rows:
             await db.refresh(row)
         return rows
+
+    @staticmethod
+    async def sync_graph_for_target(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        target_id: int,
+        points: list[KnowledgePointCreateData],
+    ) -> list[KnowledgePoint]:
+        """Merge AI output into the existing graph without breaking point IDs."""
+        existing = await KnowledgeGraphRepository.list_points_by_target(
+            db,
+            user_id=user_id,
+            target_id=target_id,
+        )
+        rows_by_key = {
+            KnowledgeGraphRepository._normalize_point_name(point.name): point
+            for point in existing
+        }
+        generated_rows: list[tuple[KnowledgePoint, KnowledgePointCreateData]] = []
+        existing_links_by_point: dict[int, dict[int, MaterialKnowledgePoint]] = {}
+
+        for item in sorted(points, key=lambda point: (point.level, point.sort_order)):
+            key = KnowledgeGraphRepository._normalize_point_name(item.name)
+            row = rows_by_key.get(key)
+            if row is None:
+                row = KnowledgePoint(
+                    user_id=user_id,
+                    target_id=target_id,
+                    parent_id=None,
+                    name=item.name,
+                    description=item.description,
+                    importance_weight=item.importance_weight,
+                    level=item.level,
+                    sort_order=item.sort_order,
+                    source=KnowledgePointSource.ai_generated,
+                )
+                db.add(row)
+                await db.flush()
+                rows_by_key[key] = row
+                db.add(
+                    UserKnowledgeMastery(
+                        user_id=user_id,
+                        target_id=target_id,
+                        knowledge_point_id=row.id,
+                        mastery_status=MasteryStatus.unlearned,
+                        mastery_score=0.0,
+                        accuracy=0.0,
+                        answered_count=0,
+                        wrong_count=0,
+                    )
+                )
+            else:
+                row.name = item.name
+                row.description = item.description
+                row.importance_weight = item.importance_weight
+                row.level = item.level
+                row.sort_order = item.sort_order
+                row.source = KnowledgePointSource.ai_generated
+                db.add(row)
+
+            generated_rows.append((row, item))
+
+        await db.flush()
+
+        generated_ids = [row.id for row, _item in generated_rows]
+        if generated_ids:
+            existing_link_result = await db.execute(
+                select(MaterialKnowledgePoint).where(
+                    MaterialKnowledgePoint.knowledge_point_id.in_(generated_ids)
+                )
+            )
+            for link in existing_link_result.scalars().all():
+                existing_links_by_point.setdefault(link.knowledge_point_id, {})[
+                    link.material_id
+                ] = link
+            await db.execute(
+                delete(MaterialKnowledgePoint).where(
+                    MaterialKnowledgePoint.knowledge_point_id.in_(generated_ids)
+                )
+            )
+
+        for row, item in generated_rows:
+            parent = (
+                rows_by_key.get(
+                    KnowledgeGraphRepository._normalize_point_name(item.parent_name)
+                )
+                if item.parent_name
+                else None
+            )
+            row.parent_id = parent.id if parent is not None and parent.id != row.id else None
+            db.add(row)
+
+            merged_evidence: dict[int, dict[str, object]] = {
+                material_id: {
+                    "material_id": material_id,
+                    "snippet": link.evidence_text or "",
+                    "relevance_score": link.relevance_score,
+                }
+                for material_id, link in existing_links_by_point.get(row.id, {}).items()
+            }
+            for evidence in item.evidence:
+                material_id = evidence.get("material_id")
+                if material_id is None:
+                    continue
+                try:
+                    normalized_material_id = int(material_id)
+                except (TypeError, ValueError):
+                    continue
+                merged_evidence[normalized_material_id] = {
+                    "material_id": normalized_material_id,
+                    "snippet": str(evidence.get("snippet", "") or "")[:500],
+                    "relevance_score": float(evidence.get("relevance_score", 1.0) or 1.0),
+                }
+
+            for evidence in merged_evidence.values():
+                db.add(
+                    MaterialKnowledgePoint(
+                        material_id=int(evidence["material_id"]),
+                        knowledge_point_id=row.id,
+                        relevance_score=float(evidence.get("relevance_score", 1.0) or 1.0),
+                        evidence_text=str(evidence.get("snippet", "") or "")[:500],
+                    )
+                )
+
+        await db.commit()
+        return await KnowledgeGraphRepository.list_points_by_target(
+            db,
+            user_id=user_id,
+            target_id=target_id,
+        )
 
     @staticmethod
     async def list_mastery_by_point_ids(
