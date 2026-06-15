@@ -157,26 +157,30 @@ class MaterialService:
         *,
         current_user: User,
         material_id: int,
-    ) -> tuple[Material, str | None, str]:
+    ) -> tuple[Material, str | None, str, str | None]:
         """预览资料。
 
-        第一阶段只直接读取 TXT 文件内容；PDF 和图片预览先返回明确提示。
+        preview_text 保留 TXT 原文件读取结果以兼容旧前端；parsed_text
+        统一返回资料解析后的文本，供 TXT/PDF/图片详情页阅读。
         """
         material = await MaterialService.get_detail(
             db,
             current_user=current_user,
             material_id=material_id,
         )
+        parsed_text = material.parsed_text if material.parsed_text else None
 
         if material.file_type != MaterialType.txt:
-            return material, None, "当前阶段仅支持 TXT 资料文本预览"
+            if parsed_text:
+                return material, None, "success", parsed_text
+            return material, None, "资料尚无解析文本", None
 
         file_path = Path(material.file_path)
         if not file_path.exists():
             raise ValueError("资料文件不存在")
 
         preview_text = file_path.read_text(encoding="utf-8", errors="ignore")
-        return material, preview_text, "success"
+        return material, preview_text, "success", parsed_text
 
     @staticmethod
     async def get_source_file(

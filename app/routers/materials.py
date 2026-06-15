@@ -131,7 +131,7 @@ async def preview_material(
     第一阶段 TXT 返回文本内容，PDF 和图片返回暂不支持文本预览的提示。
     """
     try:
-        material, preview_text, message = await MaterialService.preview(
+        material, preview_text, message, parsed_text = await MaterialService.preview(
             db,
             current_user=current_user,
             material_id=material_id,
@@ -143,6 +143,7 @@ async def preview_material(
         data=MaterialPreviewResponse(
             material=MaterialResponse.model_validate(material),
             preview_text=preview_text,
+            parsed_text=parsed_text,
             message=message,
         )
     )

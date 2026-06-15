@@ -1,15 +1,20 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_admin_user
 from app.models.material import MaterialParseStatus
+from app.models.material import Material
 from app.models.parse_task import ParseTaskStatus
+from app.models.parse_task import ParseTask
 from app.models.user import User, UserRole
+from app.models.admin_log import AdminLog
 from app.repositories.admin_log_repository import AdminLogRepository
 from app.repositories.material_repository import MaterialRepository
 from app.repositories.parse_task_repository import ParseTaskRepository
 from app.repositories.user_repository import UserRepository
+from app.schemas.admin import AdminSummaryResponse, AdminUserStatusUpdateRequest
 from app.schemas.admin_log import AdminLogResponse
 from app.schemas.material import MaterialDetailResponse, MaterialResponse
 from app.schemas.parse_task import ParseTaskDetailResponse, ParseTaskResponse
@@ -19,6 +24,47 @@ from app.services.parser_service import ParserService
 from app.utils.responses import fail, page_result, success
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+async def _count_by(db: AsyncSession, column, *conditions) -> dict[str, int]:
+    result = await db.execute(
+        select(column, func.count())
+        .where(*conditions)
+        .group_by(column)
+    )
+    return {str(key.value if hasattr(key, "value") else key): count for key, count in result.all()}
+
+
+@router.get("/summary", response_model=ApiResponse[AdminSummaryResponse])
+async def get_summary(
+    _admin_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员后台总览统计。"""
+    total_users = (await db.execute(select(func.count()).select_from(User).where(User.is_deleted.is_(False)))).scalar_one()
+    role_counts = await _count_by(db, User.role, User.is_deleted.is_(False))
+    active_counts = await _count_by(db, User.is_active, User.is_deleted.is_(False))
+    total_materials = (
+        await db.execute(select(func.count()).select_from(Material).where(Material.is_deleted.is_(False)))
+    ).scalar_one()
+    material_status = await _count_by(db, Material.parse_status, Material.is_deleted.is_(False))
+    task_status = await _count_by(db, ParseTask.task_status)
+    recent_logs = (await db.execute(select(func.count()).select_from(AdminLog))).scalar_one()
+
+    return success(
+        data=AdminSummaryResponse(
+            total_users=total_users,
+            student_users=role_counts.get(UserRole.student.value, 0),
+            admin_users=role_counts.get(UserRole.admin.value, 0),
+            active_users=active_counts.get("True", 0),
+            inactive_users=active_counts.get("False", 0),
+            total_materials=total_materials,
+            material_parse_status={status.value: material_status.get(status.value, 0) for status in MaterialParseStatus},
+            parse_task_status={status.value: task_status.get(status.value, 0) for status in ParseTaskStatus},
+            failed_tasks=task_status.get(ParseTaskStatus.failed.value, 0),
+            recent_logs=recent_logs,
+        )
+    )
 
 
 @router.get("/users", response_model=ApiResponse[PageResult[UserResponse]])
@@ -47,6 +93,35 @@ async def list_users(
             page_size=page_size,
         )
     )
+
+
+@router.patch("/users/{user_id}/status", response_model=ApiResponse[UserResponse])
+async def update_user_status(
+    user_id: int,
+    payload: AdminUserStatusUpdateRequest,
+    admin_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员启用或禁用普通用户。"""
+    if user_id == admin_user.id and not payload.is_active:
+        return fail(code=40004, message="不能禁用当前管理员账号")
+
+    user = await UserRepository.get_by_id(db, user_id)
+    if user is None:
+        return fail(code=40401, message="用户不存在")
+
+    user = await UserRepository.update_active_status(db, user, is_active=payload.is_active)
+    await AdminLogRepository.create(
+        db,
+        admin_user_id=admin_user.id,
+        operation_type="update_user_status",
+        target_type="user",
+        target_id=user.id,
+        operation_result="success",
+        remark=f"设置用户 {user.username} 为 {'启用' if user.is_active else '禁用'}",
+    )
+
+    return success(data=UserResponse.model_validate(user))
 
 
 @router.get("/materials", response_model=ApiResponse[PageResult[MaterialResponse]])

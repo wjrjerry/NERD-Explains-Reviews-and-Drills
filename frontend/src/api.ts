@@ -1,4 +1,7 @@
 import type {
+  AdminLog,
+  AdminParseTask,
+  AdminSummary,
   AiUsageLogItem,
   AiUsageSummary,
   Difficulty,
@@ -183,6 +186,23 @@ export const api = {
   health: () => request<HealthStatus>("/health"),
   healthDb: () => request<HealthStatus>("/health/db"),
   healthRedis: () => request<HealthStatus>("/health/redis"),
+
+  getAdminSummary: () => request<AdminSummary>("/admin/summary"),
+  listAdminUsers: (page = 1, pageSize = 20, role?: User["role"], isActive?: boolean) =>
+    request<Pagination<User>>(`/admin/users${buildQuery({ page, page_size: pageSize, role, is_active: isActive })}`),
+  updateAdminUserStatus: (userId: number, isActive: boolean) =>
+    request<User>(`/admin/users/${userId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_active: isActive })
+    }),
+  listAdminMaterials: (page = 1, pageSize = 20, parseStatus?: Material["parse_status"]) =>
+    request<Pagination<Material>>(`/admin/materials${buildQuery({ page, page_size: pageSize, parse_status: parseStatus })}`),
+  listAdminTasks: (page = 1, pageSize = 20, status?: AdminParseTask["task_status"]) =>
+    request<Pagination<AdminParseTask>>(`/admin/tasks${buildQuery({ page, page_size: pageSize, status })}`),
+  retryAdminTask: (taskId: number) =>
+    request<{ task: AdminParseTask }>(`/admin/tasks/${taskId}/retry`, { method: "POST" }),
+  listAdminLogs: (page = 1, pageSize = 20) =>
+    request<Pagination<AdminLog>>(`/admin/logs${buildQuery({ page, page_size: pageSize })}`),
 
   async login(username: string, password: string) {
     const data = await request<{ token: { access_token: string; token_type: string }; user: User }>("/auth/login", {
