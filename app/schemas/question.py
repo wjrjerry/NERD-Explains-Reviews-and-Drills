@@ -67,6 +67,19 @@ class QuestionHintResponse(BaseModel):
     hint: str
 
 
+class QuestionSolutionOption(BaseModel):
+    key: str
+    text: str
+    analysis: str
+
+
+class QuestionSolutionResponse(BaseModel):
+    question_id: int
+    correct_answer: list[str]
+    analysis: str
+    options: list[QuestionSolutionOption]
+
+
 class QuestionGenerateResponse(BaseModel):
     material_id: int | None = None
     target_id: int | None = None

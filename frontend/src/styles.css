@@ -975,6 +975,27 @@ blockquote {
   overflow-wrap: anywhere;
 }
 
+.solution-box {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(52, 199, 89, 0.18);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(52, 199, 89, 0.08);
+}
+
+.solution-box p {
+  margin: 0;
+  color: #3f4a5d;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.solution-options {
+  display: grid;
+  gap: 6px;
+}
+
 .toolbar-fields {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) 100px;
@@ -1350,9 +1371,14 @@ blockquote {
   gap: 16px;
 }
 
+.qa-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .context-panel {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .context-fields {
@@ -1372,6 +1398,7 @@ blockquote {
   display: grid;
   grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.35fr);
   gap: 16px;
+  min-width: 0;
 }
 
 .graph-content-grid {
@@ -1383,6 +1410,16 @@ blockquote {
 
 .qa-compose-panel {
   align-content: start;
+  min-width: 0;
+}
+
+.qa-content-grid .panel,
+.chat-card,
+.chat-card strong,
+.chat-card p,
+.chat-card blockquote {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .graph-canvas {
@@ -1583,6 +1620,12 @@ blockquote {
   gap: 14px;
   border-radius: 30px;
   padding: 28px;
+}
+
+@media (max-width: 1180px) {
+  .qa-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1100px) {

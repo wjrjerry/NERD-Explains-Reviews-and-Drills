@@ -13,6 +13,7 @@ import type {
   MaterialStructured,
   QaRecord,
   QuestionHint,
+  QuestionSolution,
   QuestionType,
   Question,
   ReviewPlan,
@@ -293,6 +294,8 @@ export const api = {
     }),
   getQuestionHint: (questionId: number, level: number) =>
     request<QuestionHint>(`/questions/${questionId}/hints/${level}`),
+  getQuestionSolution: (questionId: number) =>
+    request<QuestionSolution>(`/questions/${questionId}/solution`),
 
   submitTest: (materialId: number, targetId: number | null, answers: TestSubmitAnswer[]) =>
     request<TestResult>("/tests/submit", {

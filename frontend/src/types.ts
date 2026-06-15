@@ -192,6 +192,17 @@ export interface QuestionHint {
   hint: string;
 }
 
+export interface QuestionSolution {
+  question_id: number;
+  correct_answer: string[];
+  analysis: string;
+  options: Array<{
+    key: string;
+    text: string;
+    analysis: string;
+  }>;
+}
+
 export interface TestSubmitAnswer {
   question_id: number;
   answer?: string[];

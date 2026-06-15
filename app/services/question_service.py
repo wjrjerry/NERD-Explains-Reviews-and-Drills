@@ -15,6 +15,8 @@ from app.schemas.question import (
     QuestionHintResponse,
     QuestionItem,
     QuestionOption,
+    QuestionSolutionOption,
+    QuestionSolutionResponse,
 )
 from app.services import ai_service, ai_usage_service
 
@@ -293,4 +295,34 @@ async def get_question_hint(
         question_id=question.id,
         level=level,
         hint=hints[level - 1],
+    )
+
+
+async def get_question_solution(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    question_id: int,
+) -> QuestionSolutionResponse:
+    """Return the stored answer and analysis for a question owned by the user."""
+    question = await QuestionRepository.get_question_by_id(
+        db,
+        user_id=user_id,
+        question_id=question_id,
+    )
+    if question is None:
+        raise LookupError("Question not found.")
+
+    return QuestionSolutionResponse(
+        question_id=question.id,
+        correct_answer=[str(answer) for answer in question.correct_answer],
+        analysis=question.analysis,
+        options=[
+            QuestionSolutionOption(
+                key=str(option.get("key", "")),
+                text=str(option.get("text", "")),
+                analysis=str(option.get("analysis", "")),
+            )
+            for option in question.options
+        ],
     )

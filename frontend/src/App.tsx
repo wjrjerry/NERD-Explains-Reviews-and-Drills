@@ -42,6 +42,7 @@ import type {
   MaterialStructured,
   QaRecord,
   Question,
+  QuestionSolution,
   QuestionType,
   ReviewPlan,
   StudyTarget,
@@ -2074,14 +2075,16 @@ function PracticePage({
 }) {
   const [objectiveAnswers, setObjectiveAnswers] = useState<Record<number, string[]>>({});
   const [subjectiveAnswers, setSubjectiveAnswers] = useState<Record<number, string>>({});
-  const [questionHints, setQuestionHints] = useState<Record<number, Record<number, string>>>({});
+  const [questionHints, setQuestionHints] = useState<Record<number, Record<string, string>>>({});
   const [hintLoading, setHintLoading] = useState<Record<string, boolean>>({});
+  const [questionSolutions, setQuestionSolutions] = useState<Record<number, QuestionSolution>>({});
 
   useEffect(() => {
     setObjectiveAnswers({});
     setSubjectiveAnswers({});
     setQuestionHints({});
     setHintLoading({});
+    setQuestionSolutions({});
   }, [questions]);
 
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 出题页面。" />;
@@ -2126,6 +2129,57 @@ function PracticePage({
     } finally {
       setHintLoading((current) => ({ ...current, [key]: false }));
     }
+  }
+
+  async function handleProgressiveHelp(question: Question) {
+    const revealedCount = Object.keys(questionHints[question.id] ?? {}).filter((key) => key !== "solution").length;
+    const nextLevel = revealedCount + 1;
+
+    if (nextLevel <= question.hint_count) {
+      await handleRevealHint(question.id, nextLevel);
+      return;
+    }
+
+    if (questionSolutions[question.id]) {
+      return;
+    }
+
+    const key = `${question.id}-solution`;
+    setHintLoading((current) => ({ ...current, [key]: true }));
+    try {
+      const solution = await api.getQuestionSolution(question.id);
+      setQuestionSolutions((current) => ({
+        ...current,
+        [question.id]: solution
+      }));
+    } catch (error) {
+      setQuestionHints((current) => ({
+        ...current,
+        [question.id]: {
+          ...(current[question.id] ?? {}),
+          solution: `答案加载失败：${readMessage(error)}`
+        }
+      }));
+    } finally {
+      setHintLoading((current) => ({ ...current, [key]: false }));
+    }
+  }
+
+  function helpButtonText(question: Question) {
+    if (questionSolutions[question.id]) {
+      return "答案已显示";
+    }
+    const revealedCount = Object.keys(questionHints[question.id] ?? {}).filter((key) => key !== "solution").length;
+    if (revealedCount >= question.hint_count) {
+      return "查看答案";
+    }
+    return revealedCount === 0 ? "查看提示" : "继续提示";
+  }
+
+  function isHelpLoading(questionId: number) {
+    return Object.entries(hintLoading).some(
+      ([key, loading]) => key.startsWith(`${questionId}-`) && loading
+    );
   }
 
   return (
@@ -2222,7 +2276,8 @@ function PracticePage({
                   placeholder="输入主观题答案，提交后由后端 AI 评分"
                   value={subjectiveAnswers[question.id] ?? ""}
                   onChange={(event) => {
-                    setSubjectiveAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }));
+                    const value = event.currentTarget.value;
+                    setSubjectiveAnswers((current) => ({ ...current, [question.id]: value }));
                   }}
                 />
               ) : (
@@ -2255,33 +2310,46 @@ function PracticePage({
               {question.hint_count ? (
                 <div className="hint-box">
                   <div className="hint-actions">
-                    {Array.from({ length: question.hint_count }, (_, hintIndex) => {
-                      const level = hintIndex + 1;
-                      const loading = hintLoading[`${question.id}-${level}`];
-                      return (
-                        <button
-                          className="ghost-button"
-                          key={level}
-                          type="button"
-                          disabled={loading}
-                          onClick={() => void handleRevealHint(question.id, level)}
-                        >
-                          {loading ? "加载中" : `提示 ${level}`}
-                        </button>
-                      );
-                    })}
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      disabled={isHelpLoading(question.id) || questionSolutions[question.id] !== undefined}
+                      onClick={() => void handleProgressiveHelp(question)}
+                    >
+                      {isHelpLoading(question.id) ? "加载中" : helpButtonText(question)}
+                    </button>
                   </div>
                   {Object.entries(questionHints[question.id] ?? {}).length ? (
                     <div className="hint-list">
                       {Object.entries(questionHints[question.id] ?? {})
+                        .filter(([level]) => level !== "solution")
                         .sort(([left], [right]) => Number(left) - Number(right))
                         .map(([level, hint]) => (
                           <p key={level}><strong>提示 {level}：</strong>{hint}</p>
                         ))}
+                      {questionHints[question.id]?.solution ? (
+                        <p><strong>答案：</strong>{questionHints[question.id].solution}</p>
+                      ) : null}
                     </div>
                   ) : (
-                    <p className="form-hint">需要时可逐层查看提示，完整答案会在提交自测后显示。</p>
+                    <p className="form-hint">需要时逐步查看提示，第三层之后可显示答案。</p>
                   )}
+                  {questionSolutions[question.id] ? (
+                    <div className="solution-box">
+                      <strong>参考答案：{formatAnswer(questionSolutions[question.id].correct_answer)}</strong>
+                      <p>{questionSolutions[question.id].analysis}</p>
+                      {questionSolutions[question.id].options.length ? (
+                        <div className="solution-options">
+                          {questionSolutions[question.id].options.map((option) => (
+                            <p key={option.key}>
+                              <strong>{option.key}. {option.text}</strong>
+                              {option.analysis ? `：${option.analysis}` : ""}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <p className="analysis">

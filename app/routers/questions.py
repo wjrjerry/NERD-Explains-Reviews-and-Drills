@@ -8,6 +8,7 @@ from app.schemas.question import (
     QuestionGenerateRequest,
     QuestionGenerateResponse,
     QuestionHintResponse,
+    QuestionSolutionResponse,
 )
 from app.schemas.response import ApiResponse
 from app.services import question_service
@@ -90,6 +91,30 @@ async def get_question_hint(
             user_id=current_user.id,
             question_id=question_id,
             level=level,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return success(result)
+
+
+@router.get(
+    "/{question_id}/solution",
+    response_model=ApiResponse[QuestionSolutionResponse],
+)
+async def get_question_solution(
+    question_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the full solution for a generated question owned by the user."""
+    try:
+        result = await question_service.get_question_solution(
+            db,
+            user_id=current_user.id,
+            question_id=question_id,
         )
     except LookupError as exc:
         raise HTTPException(
