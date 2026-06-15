@@ -489,7 +489,7 @@ function App() {
       title: String(formData.get("title") ?? "").trim(),
       subject: emptyToUndefined(formData.get("subject")),
       target_type: String(formData.get("target_type") ?? "exam") as StudyTarget["target_type"],
-      exam_date: emptyToUndefined(formData.get("exam_date")),
+      exam_date: normalizeDateInput(formData.get("exam_date")),
       review_goal: emptyToUndefined(formData.get("review_goal")),
       description: emptyToUndefined(formData.get("description"))
     };
@@ -729,8 +729,8 @@ function App() {
 
   async function handleGenerateReviewPlan(formData: FormData) {
     const targetId = Number(formData.get("target_id"));
-    const startDate = String(formData.get("start_date") ?? "");
-    const endDate = String(formData.get("end_date") ?? "");
+    const startDate = normalizeDateInput(formData.get("start_date")) ?? "";
+    const endDate = normalizeDateInput(formData.get("end_date")) ?? "";
     try {
       const plan = await api.generateReviewPlan(targetId, startDate, endDate);
       setReviewPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)]);
@@ -1081,7 +1081,7 @@ function AuthPage({
 
       <form className="auth-panel" onSubmit={(event) => submitForm(event, mode === "login" ? onLogin : onRegister)}>
         <div>
-          <p className="eyebrow">{mode === "login" ? "POST /auth/login" : "POST /auth/register"}</p>
+          <p className="eyebrow">{mode === "login" ? "欢迎回来" : "创建学习账号"}</p>
           <h1>{mode === "login" ? "登录" : "注册"}</h1>
         </div>
 
@@ -1190,9 +1190,9 @@ function Dashboard({
         )}
       </section>
 
-      <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="GET /tests/records" />
+      <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="来自最近自测记录" />
       <MetricCard icon={AlertTriangle} label="错题总数" value={wrongQuestions.length} hint="高频薄弱点入口" />
-      <MetricCard icon={Bot} label="AI 调用" value={aiUsageSummary?.total_calls ?? 0} hint="GET /ai-usage/summary" />
+      <MetricCard icon={Bot} label="AI 调用" value={aiUsageSummary?.total_calls ?? 0} hint="本地用量统计" />
       <MetricCard icon={Sparkles} label="Token 总量" value={formatCompactNumber(aiUsageSummary?.total_tokens ?? 0)} hint="本地计量估算" />
 
       <section className="panel wide">
@@ -1203,7 +1203,7 @@ function Dashboard({
               <CheckCircle2 size={18} />
               <div>
                 <strong>{task.title}</strong>
-                <span>{task.date} · 待完成</span>
+                <span>{formatDateZh(task.date)} · 待完成</span>
               </div>
             </div>
           )) : <p className="muted-text">暂无待完成复习任务。</p>}
@@ -1233,14 +1233,14 @@ function TargetsPage({
   return (
     <div className="two-column">
       <form className="panel form-panel" onSubmit={(event) => submitForm(event, onCreate)}>
-        <PanelTitle icon={Plus} title="创建目标" action="POST /study-targets" />
+        <PanelTitle icon={Plus} title="创建目标" />
         <input name="title" placeholder="目标标题" required />
         <input name="subject" placeholder="学科名称" required />
         <select name="target_type" defaultValue="exam">
           <option value="exam">exam</option>
           <option value="course">course</option>
         </select>
-        <input name="exam_date" type="date" />
+        <input name="exam_date" placeholder="考试日期，如 2026年06月16日" />
         <textarea name="review_goal" placeholder="复习目标" required />
         <textarea name="description" placeholder="补充说明（可选）" />
         <button className="primary-button" type="submit"><Plus size={16} />创建目标</button>
@@ -1253,7 +1253,7 @@ function TargetsPage({
             <button key={target.id} className={`material-row ${target.id === selected?.id ? "selected" : ""}`} onClick={() => onSelect(target.id)}>
               <div>
                 <strong>{target.title}</strong>
-                <span>{target.subject ?? "未设置科目"} · {target.target_type} · {target.exam_date || "无考试日期"}</span>
+                <span>{target.subject ?? "未设置科目"} · {target.target_type} · {formatDateZh(target.exam_date, "无考试日期")}</span>
               </div>
             </button>
           ))}
@@ -1342,7 +1342,7 @@ function MaterialsPage({
             setSelectedFile(null);
           }}
         >
-          <PanelTitle icon={Upload} title="上传资料" action="POST /materials" />
+          <PanelTitle icon={Upload} title="上传资料" />
           <p className="form-hint">
             {selectedTarget ? `上传后会加入当前目标：${selectedTarget.title}` : "请先在上方选择学习目标。"}
           </p>
@@ -2078,8 +2078,8 @@ function ReviewPlansPage({
         <select name="target_id" defaultValue={targets[0]?.id}>
           {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
         </select>
-        <input name="start_date" type="date" required />
-        <input name="end_date" type="date" required />
+        <input name="start_date" placeholder="开始日期，如 2026年06月16日" required />
+        <input name="end_date" placeholder="结束日期，如 2026年07月01日" required />
         <button className="primary-button" type="submit"><CalendarDays size={16} />生成计划</button>
       </form>
 
@@ -2092,7 +2092,7 @@ function ReviewPlansPage({
                 <CalendarDays size={18} />
                 <div>
                   <strong>{plan.title}</strong>
-                  <span>{plan.start_date} 至 {plan.end_date}</span>
+                  <span>{formatDateZh(plan.start_date)} 至 {formatDateZh(plan.end_date)}</span>
                 </div>
               </div>
               <p>{plan.summary}</p>
@@ -2105,7 +2105,7 @@ function ReviewPlansPage({
                     <CheckCircle2 size={18} />
                     <div>
                       <strong>{task.title}</strong>
-                      <span>{task.date} · {task.completed ? "已完成" : "待完成"}</span>
+                      <span>{formatDateZh(task.date)} · {task.completed ? "已完成" : "待完成"}</span>
                       {task.knowledge_point_id || task.material_id || task.wrong_question_id ? (
                         <span>
                           {task.knowledge_point_id ? `知识点 ${task.knowledge_point_id}` : ""}
@@ -2202,9 +2202,9 @@ function AdminPage({
 }) {
   return (
     <div className="grid admin-grid">
-      <MetricCard icon={Shield} label="API 健康" value={health.api?.status ?? "error"} hint="GET /health" />
-      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="GET /health/db" />
-      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="GET /health/redis" />
+      <MetricCard icon={Shield} label="API 健康" value={health.api?.status ?? "error"} hint="接口服务状态" />
+      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="数据存储状态" />
+      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="缓存服务状态" />
       <MetricCard icon={FileText} label="资料总数" value={materials.length} hint="接口巡检" />
 
       <section className="panel wide">
@@ -2341,6 +2341,32 @@ function formatCompactNumber(value: number | string) {
 function formatMoney(value: number | string | null | undefined, currency = "USD") {
   const numeric = Number(value) || 0;
   return `${numeric.toFixed(4)} ${currency}`;
+}
+
+function normalizeDateInput(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  if (!text) return undefined;
+
+  const normalized = text
+    .replace(/[年月/.]/g, "-")
+    .replace(/日/g, "")
+    .replace(/\s+/g, "");
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return text;
+
+  const [, year, month, day] = match;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function formatDateZh(value: string | null | undefined, fallback = "未设置日期") {
+  if (!value) return fallback;
+
+  const normalized = normalizeDateInput(value);
+  const match = normalized?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return value;
+
+  const [, year, month, day] = match;
+  return `${year}年${Number(month)}月${Number(day)}日`;
 }
 
 function formatAnswer(values: string[]) {
