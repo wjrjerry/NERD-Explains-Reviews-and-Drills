@@ -1,257 +1,747 @@
-# NERD 前端边界测试报告与优化方案
+# backend 分支前后端实现反馈
 
-## 测试概览
+本文基于当前 `backend` 分支代码进行分析，并结合本次重新编译、启动 Nerd 后端后的实际结果，重点检查前端是否已经实现后端提供的核心功能、当前学习闭环是否完整，以及后续仍需补齐的接口和交互。
 
-| 测试类型 | 数量 | 通过 | 失败 | 跳过 |
-|----------|------|------|------|------|
-| 原有单元/集成测试 | 61 | 34 | 23 | 4 |
-| **新增边界测试** | **61** | **60** | **1** | **0** |
-| **合计** | **122** | **94** | **24** | **4** |
+## 1. 总体结论
 
-> 注：24 个失败中，23 个是原有测试在 Windows/SQLite 环境下的兼容性问题（Redis 不可用、SQLite 并发限制），与新功能无关。1 个是认证 Token Scheme 边界处理不一致。
+当前 `backend` 已经从“单资料 AI 学习闭环”推进到一个较完整的全栈版本。后端提供了认证、学习目标、资料上传与解析、结构化资料、知识提炼、知识图谱、AI 问答、AI 出题、自测、错题、复习计划、导出、AI 用量和管理员接口；前端已经接入其中大部分学生端核心能力。
 
-## 新增边界测试覆盖范围
+本次 backend 更新重点补强了资料解析链路，尤其是 PDF/图片/OCR 相关能力：
 
-测试文件：[tests/test_boundary_frontend.py](tests/test_boundary_frontend.py)
+- Docker 镜像新增 `poppler-utils`、`tesseract-ocr`、`tesseract-ocr-chi-sim` 等解析依赖。
+- 后端新增视觉解析服务与 PDF/OCR fallback 逻辑。
+- 资料解析后仍会自动触发资料级知识提炼、目标级知识提炼和知识图谱刷新。
+- 新增资料视觉结构表与 Alembic merge 迁移，数据库结构可以正常升级到最新 heads。
 
-| 测试类 | 覆盖内容 | 结果 |
-|--------|----------|------|
-| `TestAuthBoundaryCase` | 空用户名/密码、SQL注入、重复注册、错误密码、过期Token、非数字sub、并发注册 | ✅ 10/10 |
-| `TestStudyTargetBoundaryCase` | 空标题、非法类型、分页边界、跨用户隔离 | ✅ 4/4 |
-| `TestMaterialBoundaryCase` | 空文件、无文件上传、不存在的target、跨用户上传、超大文本、状态转换 | ✅ 6/6 |
-| `TestQaBoundaryCase` | 未解析资料提问、空问题、跨用户访问、分页边界 | ✅ 4/4 |
-| `TestQuestionBoundaryCase` | 非法题型、count=0、非法难度、未解析资料出题 | ✅ 4/4 |
-| `TestSubmitBoundaryCase` | 空答案、缺少字段、无效question_id、不存在material | ✅ 4/4 |
-| `TestWrongQuestionBoundaryCase` | 非法mastery状态、跨用户隔离、分页边界 | ✅ 3/3 |
-| `TestReviewPlanBoundaryCase` | end<start、非法日期格式、跨用户计划、分页边界 | ✅ 4/4 |
-| `TestKnowledgeGraphBoundaryCase` | 不存在的target、跨用户图谱、非法max_points、空图谱、不存在知识点 | ✅ 5/5 |
-| `TestApiResponseConsistencyCase` | 所有公开端点返回 `{code, message, data}` 封套 | ✅ 3/3 |
-| `TestAdminBoundaryCase` | 学生被拒403、管理员正常访问 | ✅ 2/2 |
-| `TestFullFlowBoundaryCase` | **注册→目标→上传→解析→提炼→问答→出题→自测→错题→复习计划** | ✅ 通过 |
-| `TestAiUsageBoundaryCase` | 认证要求、分页边界、摘要端点 | ✅ 3/3 |
-| `TestExportBoundaryCase` | 未登录拒绝导出错题/复习计划 | ✅ 2/2 |
+当前前端已经覆盖：
 
-## 发现的关键边界问题
+- 注册、登录、token 保存与自动会话恢复
+- 学习目标创建、列表、更新、删除
+- 资料上传、资料列表、解析状态展示、解析触发、删除
+- 资料预览与结构化阅读
+- 资料级知识提炼
+- 目标级知识图谱生成、展示、知识点详情
+- 基于资料的 AI 问答与历史展示
+- 基于资料的 AI 出题，支持单选、多选、判断、主观题
+- 自测提交、结果展示、主观题反馈展示
+- 错题本、错题掌握状态更新、错题 Markdown 导出
+- 复习计划生成、展示、Markdown 导出
+- 知识总结 Markdown 导出、Anki CSV 导出
+- 学习仪表盘与基础管理员健康检查
 
-### 1. 认证 Token Scheme 处理不一致
+当前仍未充分覆盖：
 
-- **位置**: [app/dependencies/auth.py:34](app/dependencies/auth.py#L34)
-- **现象**: 当 `Authorization` 头使用非 Bearer scheme（如 `Token abc`）时，`HTTPBearer(auto_error=False)` 返回 `None`，导致返回"未提供认证令牌"而非"认证令牌类型错误"
-- **影响**: 前端如果误用了错误的 scheme 格式，得到的错误提示不准确
-- **建议修复**:
-  ```python
-  # 在 get_current_user 中，credentials 为 None 之前，
-  # 检查 Authorization 头是否存在但 scheme 不匹配
-  ```
+- AI 用量统计页面
+- 管理员端真实数据管理页面
+- 知识点详情接口的深度交互
+- 题目/错题与真实知识点 ID 的稳定绑定
+- 测试后自动更新知识点掌握度的完整闭环
+- 前端对自动解析、自动知识提炼、自动图谱刷新的状态感知
+- 目标级 QA / 按知识点 QA
+- 按知识点出题与用户自定义出题要求
+- 资料解析任务队列的前端展示
+- OCR/PDF 解析质量、失败原因和重试的完整用户体验
 
-### 2. 知识提炼接口需要 exactly-one 语义
+## 2. 当前运行与构建状态
 
-- **位置**: [app/schemas/knowledge.py:35](app/schemas/knowledge.py#L35)
-- **现象**: `material_id` 和 `target_id` 不能同时传，前端需了解这个约束
-- **当前**: 返回 422 错误消息清晰，不阻塞前端开发
+当前 `backend` 分支已通过以下检查：
 
-### 3. 知识图谱接口使用路径参数
-
-- **位置**: [app/routers/knowledge_graphs.py:42](app/routers/knowledge_graphs.py#L42)
-- **现象**: `GET /knowledge-graphs/{target_id}` 而非 `GET /knowledge-graphs?target_id=X`
-- **影响**: 前端需注意 URL 拼接方式
-
-### 4. 缺少统一的测试记录列表端点
-
-- **现象**: 只有 `POST /tests/submit`，没有 `GET /tests/records`
-- **影响**: 前端目前无法查看历史自测记录列表
-- **建议**: 新增 `GET /tests/records` 端点
-
----
-
-## 基于用户建议的优化方向与方案
-
-### 一、知识点图谱 + 掌握度模型（最高优先级）
-
-**当前状态**: ✅ 后端数据模型已完整实现
-
-- `knowledge_points` 表 + `KnowledgePoint` 模型
-- `material_knowledge_points`、`question_knowledge_points`、`user_knowledge_mastery` 关联表
-- AI 出题已支持 `knowledge_point_ids` 参数
-- 知识图谱生成 API (`POST /knowledge-graphs/generate`) 已就绪
-
-**前端需要建设**:
-
-```
-前端新增页面/组件：
-├── KnowledgeGraphView        # 可视化知识图谱（力导向图/树图）
-│   ├── 每个知识点=圆形节点
-│   ├── 大小 = importance_weight 映射 (权重 0→1 映射 30px→80px)
-│   ├── 颜色 = 掌握度映射 (red=薄弱, yellow=基本, green=熟练, gray=未学习)
-│   └── 点击节点 → 弹出该知识点的错题列表
-├── KnowledgePointDrill       # 知识点详情页
-│   ├── 关联资料片段 (GET /knowledge-points/{id}/materials)
-│   ├── 关联题目 (GET /knowledge-points/{id}/questions)
-│   └── 关联错题 (GET /knowledge-points/{id}/wrong-questions)
-└── MasteryPanel              # 掌握度管理面板
-    ├── PATCH /knowledge-points/{id}/mastery 手动调整
-    └── 展示 accuracy/answered_count/wrong_count
+```text
+后端镜像：docker compose up --build -d 构建通过
+数据库迁移：docker compose exec api alembic upgrade heads 通过
+后端健康检查：GET /health 通过
+数据库健康检查：GET /health/db 通过
+Redis 健康检查：GET /health/redis 通过
+OCR 依赖：tesseract 已安装，语言包包含 chi_sim / eng / osd
+PDF 依赖：pdfinfo 可用，poppler 已安装
+解析测试：pytest tests/test_vision_parse_service.py tests/test_multimodal_parse_compare.py -q 通过，结果为 4 passed, 1 skipped
+当前分支：backend...origin/backend
 ```
 
-**可视化方案**: 使用 ECharts/D3.js 力导向图，节点配置：
+推荐运行方式：
 
-```javascript
+```bash
+docker compose up --build -d
+docker compose exec api alembic upgrade heads
+
+cd frontend
+npm install
+npm run dev
+```
+
+访问地址：
+
+```text
+前端：http://127.0.0.1:5173/
+后端：http://localhost:8000
+Swagger：http://localhost:8000/docs
+```
+
+本次重新运行时遇到过一次容器名冲突：
+
+```text
+Error response from daemon: Conflict. The container name "/ai-study-postgres" is already in use
+```
+
+原因是旧的 `ai-study-backend` compose 项目仍在运行，并且两个项目都使用了固定容器名 `ai-study-api`、`ai-study-postgres`、`ai-study-redis`。处理方式是先在旧项目目录执行：
+
+```bash
+cd /home/ywchen/study/sem2year3/SE/ai-study-backend
+docker compose down
+```
+
+然后回到 Nerd 项目重新启动：
+
+```bash
+cd /home/ywchen/study/sem2year3/SE/NERD-Explains-Reviews-and-Drills
+docker compose up -d
+docker compose exec api alembic upgrade heads
+```
+
+## 3. 前端对后端接口覆盖情况
+
+| 后端模块 | 后端接口 | 前端实现情况 | 反馈 |
+|---|---|---|---|
+| 健康检查 | `GET /health`, `/health/db`, `/health/redis` | 已接入 | 管理员页展示 API、数据库、Redis 状态 |
+| 认证 | `POST /auth/register`, `POST /auth/login`, `GET /users/me` | 已接入 | 支持注册、登录、本地 token 保存、会话恢复 |
+| 学习目标 | `POST/GET/PATCH/DELETE /study-targets` | 已接入 | 支持目标管理；尚未做复杂筛选和排序 |
+| 目标资料块 | `GET /study-targets/{target_id}/chunks` | 未直接接入 | 可用于目标级阅读、目标级 QA 检索，前端暂未使用 |
+| 资料上传 | `POST /materials` | 已接入 | 支持 PDF/TXT/图片上传入口 |
+| 资料列表/详情 | `GET /materials`, `GET /materials/{id}` | 已接入 | 支持资料库和详情页 |
+| 资料预览 | `GET /materials/{id}/preview` | 已接入 | 详情页展示 `preview_text` |
+| 资料结构化 | `GET /materials/{id}/structured` | 已接入 | 详情页已有章节与 chunks 阅读器 |
+| 资料 sections/chunks | `GET /materials/{id}/sections`, `/chunks` | 间接覆盖 | 前端使用 `/structured` 一次性获取，没有单独分页/筛选 |
+| 资料解析 | `POST /materials/{id}/parse` | 已接入 | 前端可手动触发解析；解析状态和错误会展示 |
+| 自动解析 | `POST /materials` 默认 `auto_parse=true` | 后端已实现，前端提示不准确 | 上传后会自动进入后台解析，但前端仍提示“请先解析资料”，且没有轮询解析状态 |
+| 知识提炼 | `POST /knowledge/extract` | 已接入 | 当前只发送 `material_id`，已符合后端接口约束 |
+| 自动知识提炼 | 解析成功后后台调用 `run_after_material_parsed` | 后端已实现，前端无提示 | 自动资料级/目标级提炼可能已入库，但前端不会自动展示提炼状态或结果 |
+| 知识图谱 | `GET /knowledge-graphs/{target_id}` | 已接入 | 进入目标后自动尝试加载图谱 |
+| 图谱生成 | `POST /knowledge-graphs/generate` | 已接入 | 可手动生成/刷新图谱 |
+| 知识点资料 | `GET /knowledge-points/{id}/materials` | 未接入 | 当前图谱节点只展示 graph response 内的 materials |
+| 知识点题目 | `GET /knowledge-points/{id}/questions` | 未接入 | 点击知识点后未展示对应题目列表 |
+| 知识点错题 | `GET /knowledge-points/{id}/wrong-questions` | 未接入 | 当前用前端名称匹配错题，准确度有限 |
+| 知识点掌握度 | `PATCH /knowledge-points/{id}/mastery` | 未接入 | 暂不支持手动调整知识点掌握度；自动掌握度依赖题目先绑定真实 `knowledge_point_id` |
+| AI 问答 | `POST /qa/ask`, `GET /qa/history` | 已接入 | 仍以 `material_id` 为中心，尚未做目标级/知识点级问答 |
+| AI 出题 | `POST /questions/generate` | 已接入 | 支持题型、难度、数量；当前前端按 `material_id` 出题，通常不会绑定图谱知识点 ID |
+| 自测 | `POST /tests/submit` | 已接入 | 支持客观题和主观题提交；掌握度更新只在题目存在 `question_knowledge_points` 关联时生效 |
+| 测试记录 | `GET /tests/records` | 已接入 | 仪表盘用于计算近期自测均分 |
+| 错题 | `GET /wrong-questions`, `PATCH /wrong-questions/{id}/mastery` | 已接入 | 支持错题展示和掌握状态更新 |
+| 复习计划 | `POST /review-plans/generate`, `GET /review-plans` | 已接入 | 支持计划生成、列表和任务展示 |
+| 导出 | `/exports/*.md`, `/exports/anki/*.csv` | 已接入 | 支持错题、复习计划、知识总结、Anki 导出 |
+| AI 用量 | `GET /ai-usage/summary`, `/logs` | 未接入 | 后端已有，前端暂无页面 |
+| 管理员 | `/admin/users`, `/admin/materials`, `/admin/tasks`, `/admin/logs` | 基本未接入 | 前端仅展示健康检查和当前用户资料巡检，不是真正管理员端 |
+
+## 4. 当前前端页面实现情况
+
+### 4.1 登录与会话
+
+前端通过 `localStorage` 保存 `ai_review_token`，后续请求自动加入：
+
+```text
+Authorization: Bearer <token>
+```
+
+登录态恢复时会调用 `GET /users/me`，失败则清除 token。
+
+评价：实现合理，满足当前前后端联调需要。后续若要更接近生产环境，可补充 token 过期提示、刷新机制和退出确认。
+
+### 4.2 仪表盘
+
+仪表盘目前聚合：
+
+- 学习目标数量
+- 资料总数
+- 已解析资料数量
+- 解析失败资料数量
+- 资料解析状态条
+- 知识图谱掌握度点阵
+- 近期自测均分
+- 错题总数
+- 即将复习任务
+
+评价：已经覆盖学习平台首页的核心概览。缺口是 AI 用量、近 7 天学习趋势、按知识点/题型正确率等更细粒度统计尚未展示。
+
+### 4.3 资料库与资料详情
+
+前端支持上传 PDF/TXT/图片，调用 `POST /materials` 入库，并可调用 `POST /materials/{id}/parse` 触发解析。
+
+需要注意：当前后端上传接口默认 `auto_parse=true`，也就是说前端上传资料后，后端会立即创建后台解析任务，并把资料状态置为 `parsing`。因此前端当前上传成功后的提示：
+
+```text
+资料上传成功，请先解析资料再使用 AI 学习功能。
+```
+
+已经和后端真实流程不一致。更准确的提示应为：
+
+```text
+资料上传成功，已开始后台解析，请稍后查看解析状态。
+```
+
+当前前端也没有针对 `parse_status=parsing` 的自动轮询。结果是：即使后端后台解析已经完成，页面仍可能停留在旧状态，用户需要手动刷新接口数据或重新进入资料详情才能看到 `parsed/failed`。
+
+详情页展示：
+
+- 资料基本信息
+- 解析状态
+- `parse_error`
+- 文本预览
+- 结构化章节与 chunks
+- 知识提炼结果
+- 生成图谱、导出总结、进入 QA、进入出题入口
+
+评价：资料主流程已可用。需要注意，前端文案写的是“PDF / TXT / 图片资料”，但如果当前环境 OCR/Tesseract/poppler 或 PDF 内容质量不满足要求，PDF/图片仍可能解析失败。建议前端在上传区增加能力说明：TXT 最稳定，PDF/图片依赖 OCR，失败时查看 `parse_error`。
+
+PDF 解析失败的常见原因包括：
+
+- Docker 镜像未重新 build，容器里缺少 `poppler-utils`、`tesseract-ocr` 或中文语言包。
+- PDF 是扫描版，OCR 识别不到足够可用文本。
+- PDF 页数超过 `PDF_OCR_MAX_PAGES`，后续页未处理。
+- OCR 超时，受 `OCR_TIMEOUT_SECONDS` 影响。
+- PDF 文件损坏、加密、图片质量低或文字过小。
+
+排查时建议查看：
+
+```sql
+SELECT id, original_filename, file_type, parse_status, parse_error, parse_warning
+FROM materials
+ORDER BY id DESC
+LIMIT 10;
+
+SELECT id, material_id, status, failure_reason, started_at, finished_at
+FROM parse_tasks
+ORDER BY id DESC
+LIMIT 10;
+```
+
+### 4.4 知识提炼
+
+前端调用：
+
+```json
 {
-  name: kp.name,
-  symbolSize: 30 + kp.importance_weight * 50,  // 大小=重要程度
-  itemStyle: {
-    color: masteryColor(kp.mastery_status)      // red/green/yellow/gray
-  }
+  "material_id": 1
 }
 ```
 
----
+这与当前后端 `POST /knowledge/extract` 约束一致。知识提炼结果展示 summary、outline、keywords、key_points、exam_points。
 
-### 六、学习仪表盘
+评价：资料级知识提炼已接入。目标级自动提炼/汇总结果目前更多体现在知识图谱和导出总结中，前端还没有单独的“目标级知识提炼面板”。
 
-**当前状态**: 后端数据已就绪，缺少前端仪表盘聚合页面
+后端实际上还存在一条自动知识提炼链路：
 
-**前端需要建设**:
-
-```
-Dashboard 页面，聚合以下 API 数据：
-
-1. 目标进度 → GET /study-targets (统计总数、即将到期)
-2. 资料解析状态 → GET /materials (按 parse_status 统计)
-3. 知识点掌握热力图 → GET /knowledge-graphs/{target_id} + 掌握度数据
-4. 各题型正确率 → 需后端新增聚合端点 或 前端从 /tests 历史统计
-5. 最近 7 天学习 → 需新增 GET /ai-usage/summary?start_at=&end_at=
-6. 高频错题知识点 → 从 /wrong-questions + knowledge_point 关联聚合
-7. 即将复习任务 → GET /review-plans?target_id=X (筛选未完成任务)
-8. AI 调用/解析任务状态 → GET /ai-usage/summary + GET /admin/tasks
+```text
+资料解析成功
+-> run_after_material_parsed()
+-> 资料级知识提炼
+-> 目标级知识提炼
+-> 目标级知识图谱刷新
 ```
 
-**推荐布局**:
+但前端没有展示这条后台链路的状态。当前 `knowledge` 结果只会在用户手动点击“知识提炼”后写入页面状态；如果后台自动提炼已经完成，前端也不会自动读取最新结果。因此用户会看到“解析成功了，但知识提炼结果仍然为空”，这属于前端状态同步缺失，不一定代表后端没有生成。
 
-```
-┌──────────────────┬──────────────────┐
-│  目标进度卡片     │  资料解析状态     │
-├──────────────────┴──────────────────┤
-│         知识点掌握热力图              │
-├──────────────────┬──────────────────┤
-│  各题型正确率     │  最近 7 天学习     │
-├──────────────────┴──────────────────┤
-│  高频错题知识点 + 即将复习任务        │
-└─────────────────────────────────────┘
+建议前端在资料解析成功后自动刷新：
+
+```text
+GET /materials/{id}
+GET /materials/{id}/structured
+GET /knowledge-graphs/{target_id}
 ```
 
----
+并考虑补充一个“最新知识提炼结果查询接口”或在现有 `POST /knowledge/extract` 上明确支持 `force_regenerate=false` 的查询/复用语义，避免为了展示结果重复调用 AI。
 
-### 七、AI Tutor 分步提示模式
+### 4.5 知识图谱
 
-**当前状态**: ❌ 完全未实现，需要新建后端表+API+前端
+前端已实现“知识图谱”页面：
 
-**后端新增**:
+- `GET /knowledge-graphs/{target_id}` 自动加载
+- `POST /knowledge-graphs/generate` 手动生成/刷新
+- 节点大小根据 `importance_weight` 映射
+- 节点颜色根据 `mastery_status` 映射
+- 节点详情展示掌握度、正确率、错题数、作答数、关联资料片段
+- 通过错题中的 `knowledge_points` 名称做前端匹配，展示关联错题
 
-```
-新增表:
-├── tutor_sessions (id, user_id, target_id, material_id, question, status)
-├── tutor_messages (id, session_id, role, content, step)
-└── feedback_actions (id, session_id, action_type: view_hint|modify_answer|resubmit|show_solution)
+评价：满足知识图谱的第一版可视化要求，已经能表达“重要程度”和“掌握情况”。但当前错题关联是前端字符串匹配，不如调用 `GET /knowledge-points/{id}/wrong-questions` 精确；知识点资料和题目也没有调用后端详情接口。
 
-新增 API:
-├── POST /tutor/start       # 开始引导式学习 → 返回 Hint 1
-├── POST /tutor/{id}/hint   # 请求下一个提示
-├── POST /tutor/{id}/check  # 检查学生答案
-├── POST /tutor/{id}/solve  # 显示完整解答
-└── GET  /tutor/{id}/progress # 查看学习进度
-```
+### 4.5.1 掌握度更新链路
 
-**前端交互流程**:
+当前掌握度不是简单由“是否有错题”直接计算出来，而是依赖题目、错题和知识点之间的真实 ID 关联。完整链路应为：
 
-```
-学生问题 → [Hint 1: 概念提示]
-          → [Hint 2: 解题方向]
-          → [Check My Answer: 提交答案 → AI 反馈]
-          → [Show Full Solution: 完整解析]
-
-每步记录 feedback_actions:
-- 是否查看了提示
-- 是否修改了答案
-- 是否最终掌握
+```text
+目标 target
+-> 资料 material
+-> 解析后生成知识点 knowledge_points
+-> 出题时题目绑定 question_knowledge_points
+-> 用户提交测试 tests/submit
+-> test_service 根据 question_knowledge_points 得到 knowledge_point_ids
+-> 写入 wrong_questions
+-> 写入 wrong_question_knowledge_points
+-> 更新 user_knowledge_mastery
+-> GET /knowledge-graphs/{target_id} 返回 mastery_score / accuracy / wrong_count
+-> 前端知识图谱显示颜色、正确率、掌握度
 ```
 
----
+当前代码中掌握度更新函数已经存在：
 
-### 八、管理员运维中心
-
-**当前状态**: 后端已有 `admin` 路由、`parse_tasks`、`admin_logs`、`ai_call_logs`。前端管理面板需扩展。
-
-**前端需要建设**:
-
-```
-Admin 面板扩展:
-├── 解析任务管理
-│   ├── 任务队列状态 (GET /admin/tasks?status=pending)
-│   ├── 失败任务重试 (POST /admin/tasks/{id}/retry)
-│   └── OCR 置信度/解析质量
-├── AI 调用监控
-│   ├── 调用日志 (GET /ai-usage/logs)
-│   ├── 失败率统计 (GET /ai-usage/summary)
-│   ├── 平均响应时间
-│   └── Token 消耗图表
-├── 用户/资料统计
-│   ├── 用户列表 (GET /admin/users)
-│   ├── 资料统计 (GET /admin/materials)
-│   └── 异常题目列表
-└── 操作审计
-    └── 管理员日志 (GET /admin/logs)
+```text
+app/services/knowledge_mastery_service.py
 ```
 
----
+测试提交时也会尝试调用：
 
-### 九、结构化解析
-
-**当前状态**: ✅ 后端已实现 `material_sections` + `material_chunks` 表
-
-```
-已有 API:
-├── GET /materials/{id}/sections      # 章节结构
-├── GET /materials/{id}/chunks        # 文本块 (支持按 section_id 筛选)
-└── GET /materials/{id}/structured    # 一次性返回 sections + chunks
+```text
+knowledge_mastery_service.update_mastery_after_test(...)
 ```
 
-**前端需要建设**:
+但它有一个关键前提：提交的题目必须能查到 `question_knowledge_points` 关联。如果用户当前是从前端“按资料出题”，请求体只有：
 
-- 资料阅读器支持左侧章节导航
-- 选中章节后高亮对应 chunks
-- 支持"基于当前章节出题"功能
-
----
-
-### 十、导出功能
-
-**当前状态**: ✅ 后端已全部实现
-
-```
-已有导出 API:
-├── GET /exports/wrong-questions.md           # 错题本 Markdown
-├── GET /exports/review-plan/{plan_id}.md     # 复习计划 Markdown
-├── GET /exports/knowledge-summary/{target_id}.md # 知识点总结
-└── GET /exports/anki/{target_id}.csv         # Anki CSV 卡片
+```json
+{
+  "material_id": 1,
+  "question_types": ["single_choice"],
+  "difficulty": "medium",
+  "count": 5
+}
 ```
 
-**前端需要建设**:
+这种路径下，后端通常只会保存题目的字符串知识点：
 
-- 在各页面添加"导出"按钮，调用对应 API
-- Anki CSV 格式已为 `front/back/tags` 结构，可直接下载导入 Anki
+```text
+questions.knowledge_points = ["需求分析", "系统设计"]
+```
 
----
+但不会稳定写入真实图谱节点关联：
 
-## 优先级建议
+```text
+question_knowledge_points.question_id
+question_knowledge_points.knowledge_point_id
+```
 
-| 优先级 | 模块 | 后端状态 | 前端工作量 | 核心价值 |
-|--------|------|----------|-----------|----------|
-| **P0** | 一、知识图谱可视化 | ✅ 就绪 | 中 | 平台核心差异化功能 |
-| **P0** | 六、学习仪表盘 | ✅ 大部分就绪 | 中 | 用户留存关键 |
-| **P1** | 十、导出功能 | ✅ 就绪 | 小 | 快速见效 |
-| **P1** | 九、结构化章节阅读 | ✅ 就绪 | 小 | 体验提升 |
-| **P2** | 八、管理员运维中心 | ✅ 就绪 | 中 | 项目完整性 |
-| **P2** | 七、AI Tutor | ❌ 需新建 | 大 | 创新功能 |
+因此测试提交时：
 
-**即战力建议**: 优先做 P0 + P1，四个功能后端基本就绪，前端可直接对接已有 API，能在 1-2 个迭代周期内完成。
+```text
+linked_point_ids = []
+mastery_outcomes = []
+```
+
+最终结果就是：
+
+```text
+wrong_questions 有错题
+questions.knowledge_points 有文字标签
+question_knowledge_points 为空
+wrong_question_knowledge_points 为空
+user_knowledge_mastery 不更新
+知识图谱 mastery_score / accuracy / wrong_count 仍为 0
+```
+
+所以“有一道错题，但掌握度全为 0”不是前端显示错误，而是当前题目/错题没有和真实知识点 ID 形成闭环。
+
+### 4.6 QA 问答
+
+当前 QA 仍基于单个资料：
+
+```json
+{
+  "material_id": 1,
+  "question": "..."
+}
+```
+
+评价：资料级问答可用，但与“目标为中心、可选择知识点提问”的最终设想还有差距。后续建议支持：
+
+- 目标级 QA：基于一个 target 下多个资料回答
+- 知识点级 QA：围绕某个 knowledge_point 回答
+- 问题附加上下文：允许用户指定“请用例题解释/请按考试答题方式回答”
+
+### 4.7 AI 出题与自测
+
+前端已支持：
+
+- 题型选择：单选、多选、判断、主观题
+- 难度选择：easy/medium/hard
+- 题目数量
+- 客观题点击选项作答
+- 主观题文本作答
+- 提交后展示得分、正确率、解析、覆盖要点、缺失要点、误区
+
+评价：自测闭环已基本完成。缺口是前端暂未支持：
+
+- 选择知识点出题
+- 用户自定义出题要求
+- 基于当前章节/chunk 出题
+- 图片/PDF 作答上传
+
+另外，当前前端出题仍以 `material_id` 为中心，这会影响掌握度闭环。后端其实已经支持更合理的目标级/知识点级出题参数：
+
+```json
+{
+  "target_id": 1,
+  "knowledge_point_ids": [3, 5],
+  "question_types": ["single_choice", "subjective"],
+  "difficulty": "medium",
+  "count": 5,
+  "extra_requirement": "更偏期末考试概念辨析"
+}
+```
+
+当前前端尚未提供知识点选择和 `extra_requirement` 输入框，因此用户实际产生的题目很可能没有真实 `knowledge_point_id` 绑定，后续自测也无法更新 `user_knowledge_mastery`。
+
+### 4.8 错题本
+
+前端已支持：
+
+- 错题列表展示
+- 展示知识点、用户答案、正确答案、错因、解析
+- 切换 `unmastered/reviewing/mastered`
+- 导出错题 Markdown
+
+评价：错题列表闭环可用。后续建议增加按知识点、目标、资料、掌握状态筛选，以及从知识图谱节点跳转到精确错题列表。
+
+需要特别区分两类掌握状态：
+
+```text
+wrong_questions.mastery_status
+```
+
+这是“单道错题”的掌握状态，前端当前已经支持手动切换 `unmastered/reviewing/mastered`。
+
+```text
+user_knowledge_mastery.mastery_status
+```
+
+这是“知识点”的掌握状态，用于知识图谱颜色、正确率、薄弱点复习计划等。它不会因为错题列表里出现一条错题就自动变化，必须有 `question_knowledge_points` / `wrong_question_knowledge_points` 这样的真实知识点 ID 关联。
+
+### 4.9 复习计划
+
+前端已支持：
+
+- 按目标、起止日期生成复习计划
+- 计划列表展示
+- 任务列表展示
+- 导出计划 Markdown
+
+评价：满足基础复习计划展示。缺口是任务完成状态没有前端交互接口，用户不能在页面中标记任务已完成。
+
+### 4.10 导出
+
+前端已接入：
+
+- 错题本 Markdown
+- 复习计划 Markdown
+- 知识总结 Markdown
+- Anki CSV
+
+评价：导出功能对用户有实际价值，已覆盖 P1 要求。后续可以增加导出按钮的 loading 状态和空数据提示。
+
+### 4.11 管理员端
+
+当前前端“管理员端”主要展示：
+
+- API 健康
+- 数据库健康
+- Redis 健康
+- 当前用户资料总数
+- 当前用户资料解析巡检
+
+但后端真实管理员接口包括：
+
+- `GET /admin/users`
+- `GET /admin/materials`
+- `GET /admin/tasks`
+- `POST /admin/tasks/{task_id}/retry`
+- `GET /admin/logs`
+
+这些目前没有接入。
+
+评价：当前管理员端更像“系统健康检查面板”，还不是完整管理员运维中心。若需要验收管理员功能，需要继续扩展。
+
+### 4.12 AI 用量与计费
+
+后端已有：
+
+- `GET /ai-usage/summary`
+- `GET /ai-usage/logs`
+
+前端当前没有页面展示 token 消耗、调用次数、估算费用、按功能统计、调用日志。
+
+评价：这是 P1 中“用户可查看计费情况”的主要缺口。建议新增“AI 用量”页面或放入仪表盘/管理员页。
+
+## 5. 当前主要问题与风险
+
+### P0：前端仍有部分体验与后端能力不匹配
+
+上传区写明支持 PDF/TXT/图片，但 PDF/图片解析依赖 OCR 环境和文件质量。若解析失败，用户可能认为是前端或系统错误。
+
+建议：
+
+- 上传区补充说明：TXT 最稳定，PDF/图片会尝试 OCR。
+- 解析失败时显示更具体的 `parse_error` 和建议操作。
+- 对扫描 PDF、大文件 PDF 增加提示。
+
+### P0：自动解析流程前端没有状态同步
+
+后端上传接口默认会自动解析：
+
+```text
+POST /materials
+auto_parse=true
+-> parse_status=parsing
+-> BackgroundTasks 解析
+```
+
+但前端当前仍把上传和解析表现成完全手动流程，且没有轮询 `parsing` 状态。这会导致两个问题：
+
+```text
+用户以为需要手动点“解析”
+用户看不到后台解析完成或失败的即时结果
+```
+
+建议：
+
+1. 上传成功文案改为“已开始后台解析”。
+2. 对 `parse_status=parsing` 的资料每 2-3 秒轮询 `GET /materials/{id}`。
+3. 状态变为 `parsed` 后自动刷新 preview、structured、knowledge graph。
+4. 状态变为 `failed` 后展示 `parse_error` 和 `parse_warning`。
+5. 前端 `Material` 类型补充 `parse_warning?: string | null`。
+
+### P0：自动知识提炼缺少用户可见反馈
+
+后端解析成功后会尝试自动执行：
+
+```text
+资料级知识提炼
+目标级知识提炼
+知识图谱刷新
+```
+
+但前端没有对应状态，也不会自动展示后台生成的知识提炼结果。用户只能看到手动“知识提炼”按钮，因此容易误解为后端没有执行自动提炼。
+
+建议：
+
+- 解析成功后提示“正在同步知识提炼与图谱”。
+- 解析成功后自动刷新图谱。
+- 补充知识提炼历史/最新结果查询能力，或让前端以非强制方式调用 `/knowledge/extract` 获取已有结果。
+- 自动提炼失败时不要影响资料解析成功，但应在前端可见，例如展示“资料解析成功，知识提炼待重试”。
+
+### P0：知识图谱错题关联不够精确
+
+当前知识图谱详情中“关联错题”通过前端字符串匹配：
+
+```text
+wrong_question.knowledge_points 与 activeNode.name 互相 includes
+```
+
+这会出现漏匹配或误匹配。
+
+建议改为调用：
+
+```text
+GET /knowledge-points/{knowledge_point_id}/wrong-questions
+```
+
+### P0：掌握度闭环尚未完整打通
+
+当前已经有：
+
+```text
+knowledge_points
+user_knowledge_mastery
+question_knowledge_points
+wrong_question_knowledge_points
+knowledge_mastery_service.update_mastery_after_test()
+```
+
+但前端主要使用“按资料出题”，导致题目通常只带字符串知识点，而没有绑定真实 `knowledge_point_id`。一旦 `question_knowledge_points` 为空，后续就无法更新 `user_knowledge_mastery`。
+
+典型现象：
+
+```text
+错题本里有错题
+知识图谱节点仍显示 0%
+accuracy = 0
+answered_count = 0
+wrong_count = 0
+```
+
+推荐修复：
+
+1. 后端增强按资料出题兜底逻辑：即使请求只传 `material_id`，也应根据 `material.target_id` 找到目标图谱，并用 AI/规则把题目绑定到最相关的 `knowledge_point_id`。
+2. 前端增强出题入口：支持从知识图谱选择知识点出题，请求中传 `target_id` 和 `knowledge_point_ids`。
+3. 前端提交测试后刷新知识图谱，确保最新 `user_knowledge_mastery` 反映到节点颜色和掌握度。
+4. 知识图谱详情页不要用字符串匹配错题，应调用 `GET /knowledge-points/{id}/wrong-questions`。
+
+调试时建议依次检查：
+
+```sql
+SELECT id, stem, knowledge_points FROM questions ORDER BY id DESC LIMIT 5;
+SELECT * FROM question_knowledge_points ORDER BY id DESC LIMIT 10;
+SELECT * FROM wrong_question_knowledge_points ORDER BY id DESC LIMIT 10;
+SELECT knowledge_point_id, mastery_status, mastery_score, accuracy, answered_count, wrong_count
+FROM user_knowledge_mastery
+ORDER BY knowledge_point_id;
+```
+
+### P1：AI 用量页面缺失
+
+后端已经完成 token 统计和本地估算计费，但前端没有入口。
+
+建议新增页面：
+
+```text
+AI 用量
+├── 总调用次数
+├── prompt_tokens
+├── completion_tokens
+├── total_tokens
+├── estimated_cost
+├── 按 feature 分组
+└── 最近调用日志
+```
+
+### P1：目标级学习链路仍不够强
+
+当前 QA、出题、自测仍以 `material_id` 为中心。知识图谱引入后，用户更自然的路径应该是：
+
+```text
+选择目标
+-> 查看知识图谱
+-> 点击知识点
+-> 查看关联资料/错题/题目
+-> 针对该知识点提问或出题
+```
+
+前端目前只完成了图谱展示，未完成知识点 drill 链路。
+
+### P1：出题缺少用户自定义要求
+
+后端曾讨论过“用户自主输入补充题目要求”，当前前端出题表单只有题型、难度、数量。
+
+建议增加：
+
+```text
+custom_instruction: string
+```
+
+例如：
+
+```text
+“更偏期末考试风格”
+“多考概念辨析”
+“围绕第三章知识点”
+```
+
+### P2：管理员端仍偏弱
+
+后端管理员接口比较完整，但前端没有接入真实管理员数据。建议增加：
+
+- 用户列表
+- 全部资料列表
+- 解析任务队列
+- 失败任务重试
+- 管理员日志
+- AI 调用日志入口
+
+### P2：结构化阅读还可以继续增强
+
+当前已展示 sections/chunks，但还没有：
+
+- 章节搜索
+- 点击 chunk 生成题目
+- 点击 chunk 提问
+- chunk 与知识点的关联展示
+
+## 6. 推荐下一步开发顺序
+
+### 第一步：修复掌握度完整闭环
+
+优先级最高，因为它直接影响知识图谱是否可信。如果用户做错题后图谱仍然全为 0，知识图谱会变成静态展示，而不是学习反馈系统。
+
+后端建议：
+
+```text
+material_id 出题
+-> 自动读取 material.target_id
+-> 查找该目标下 knowledge_points
+-> 根据题干、解析、AI 返回的 knowledge_points 字符串推断 knowledge_point_ids
+-> 写入 question_knowledge_points
+-> 测试提交时更新 user_knowledge_mastery
+```
+
+前端建议：
+
+```text
+知识图谱节点
+-> 选择一个或多个知识点
+-> 生成针对这些知识点的题
+-> 提交测试后刷新图谱
+```
+
+### 第二步：补齐 AI 用量页面
+
+优先级高，因为后端已完成，前端实现成本低，且能体现真实 AI 系统可观测性。
+
+接入接口：
+
+```text
+GET /ai-usage/summary
+GET /ai-usage/logs
+```
+
+### 第三步：完善知识点详情链路
+
+把知识图谱从“展示图”升级成“学习入口”。
+
+接入接口：
+
+```text
+GET /knowledge-points/{id}/materials
+GET /knowledge-points/{id}/questions
+GET /knowledge-points/{id}/wrong-questions
+PATCH /knowledge-points/{id}/mastery
+```
+
+### 第四步：增强出题参数
+
+让前端支持：
+
+- 选择知识点出题
+- 输入自定义要求
+- 从当前章节/chunk 出题
+
+### 第五步：目标级 QA
+
+当前资料级 QA 可用，但目标级 QA 更贴合“一个复习目标下多个资料”的产品逻辑。
+
+### 第六步：管理员端真实接入
+
+接入：
+
+```text
+GET /admin/users
+GET /admin/materials
+GET /admin/tasks
+POST /admin/tasks/{id}/retry
+GET /admin/logs
+```
+
+## 7. 验收视角总结
+
+当前 `backend` 分支已经可以作为“完整学习闭环演示版本”：
+
+```text
+注册/登录
+-> 创建目标
+-> 上传资料
+-> 解析资料
+-> 查看结构化资料
+-> 知识提炼
+-> 生成知识图谱
+-> AI 问答
+-> AI 出题
+-> 自测提交
+-> 错题沉淀
+-> 复习计划
+-> 导出资料
+```
+
+但如果以“知识图谱驱动的目标级学习平台”为最终目标，当前前端还只是完成了图谱入口和核心闭环，尚未完全把 QA、出题、错题、复习计划都围绕知识点重新组织。下一阶段应围绕“知识点详情页”和“AI 用量页”继续补齐。
