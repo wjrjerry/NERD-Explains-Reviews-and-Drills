@@ -8,9 +8,15 @@ from app.schemas.material import MaterialDetailResponse, MaterialPreviewResponse
 from app.schemas.material_structure import (
     MaterialChunksResponse,
     MaterialChunkResponse,
+    MaterialFiguresResponse,
+    MaterialFigureResponse,
+    MaterialFormulasResponse,
+    MaterialFormulaResponse,
     MaterialSectionsResponse,
     MaterialSectionResponse,
     MaterialStructuredResponse,
+    MaterialTablesResponse,
+    MaterialTableResponse,
 )
 from app.schemas.response import ApiResponse, PageResult
 from app.services.material_service import MaterialService
@@ -189,6 +195,78 @@ async def list_material_chunks(
     )
 
 
+@router.get("/{material_id}/figures", response_model=ApiResponse[MaterialFiguresResponse])
+async def list_material_figures(
+    material_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询资料中的图片、几何图和流程图说明。"""
+    try:
+        figures = await MaterialStructureService.list_figures(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+    except ValueError as exc:
+        return fail(code=40402, message=str(exc))
+
+    return success(
+        data=MaterialFiguresResponse(
+            material_id=material_id,
+            figures=[MaterialFigureResponse.model_validate(figure) for figure in figures],
+        )
+    )
+
+
+@router.get("/{material_id}/tables", response_model=ApiResponse[MaterialTablesResponse])
+async def list_material_tables(
+    material_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询资料中的表格内容。"""
+    try:
+        tables = await MaterialStructureService.list_tables(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+    except ValueError as exc:
+        return fail(code=40402, message=str(exc))
+
+    return success(
+        data=MaterialTablesResponse(
+            material_id=material_id,
+            tables=[MaterialTableResponse.model_validate(table) for table in tables],
+        )
+    )
+
+
+@router.get("/{material_id}/formulas", response_model=ApiResponse[MaterialFormulasResponse])
+async def list_material_formulas(
+    material_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询资料中的公式和公式解释。"""
+    try:
+        formulas = await MaterialStructureService.list_formulas(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+    except ValueError as exc:
+        return fail(code=40402, message=str(exc))
+
+    return success(
+        data=MaterialFormulasResponse(
+            material_id=material_id,
+            formulas=[MaterialFormulaResponse.model_validate(formula) for formula in formulas],
+        )
+    )
+
+
 @router.get("/{material_id}/structured", response_model=ApiResponse[MaterialStructuredResponse])
 async def get_material_structured(
     material_id: int,
@@ -207,6 +285,21 @@ async def get_material_structured(
             current_user=current_user,
             material_id=material_id,
         )
+        figures = await MaterialStructureService.list_figures(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+        tables = await MaterialStructureService.list_tables(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+        formulas = await MaterialStructureService.list_formulas(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
     except ValueError as exc:
         return fail(code=40402, message=str(exc))
 
@@ -215,6 +308,9 @@ async def get_material_structured(
             material_id=material_id,
             sections=[MaterialSectionResponse.model_validate(section) for section in sections],
             chunks=[MaterialChunkResponse.model_validate(chunk) for chunk in chunks],
+            figures=[MaterialFigureResponse.model_validate(figure) for figure in figures],
+            tables=[MaterialTableResponse.model_validate(table) for table in tables],
+            formulas=[MaterialFormulaResponse.model_validate(formula) for formula in formulas],
         )
     )
 

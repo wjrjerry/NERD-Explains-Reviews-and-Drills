@@ -211,6 +211,8 @@ tempCodeRunnerFile.py
 
 # Project runtime files
 uploads/
+docs/temp/
+tests/outputs/
 
 # Frontend dependencies and generated outputs
 frontend/node_modules/

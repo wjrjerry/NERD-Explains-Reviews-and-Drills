@@ -108,24 +108,57 @@ POST /materials/{material_id}/parse
 资料响应新增：
 
 ```text
-parse_warning
+parse_warning: string | null
 ```
 
-用于展示解析质量风险，例如 OCR 文本较短、疑似乱码、文本被截断等。`parse_error` 仍表示解析失败原因；`parse_warning` 表示解析成功但建议用户注意质量。
+含义：
 
-资料解析成功后，后端还会自动生成：
+- `parse_error` 表示解析失败，通常对应 `parse_status=failed`。
+- `parse_warning` 表示解析成功或部分成功，但质量可能不稳定。
+- 例如 OCR 文本过短、疑似乱码、碎片行较多、PDF 部分页 OCR 失败、解析文本被截断。
+
+前端影响：
+
+- 当 `parse_status=parsed` 且 `parse_warning != null` 时，AI 功能可以启用，但应提示用户“解析质量可能影响回答/出题效果”。
+- 资料卡片或资料详情页建议展示 warning 图标或黄色提示。
+- 不要把 `parse_warning` 当作失败处理。
+
+推荐页面行为：
+
+```text
+parse_status=parsed, parse_warning=null
+  -> 正常展示“可学习”
+
+parse_status=parsed, parse_warning!=null
+  -> 展示“可学习，但建议校对”
+  -> 允许 QA / 出题 / 图谱
+
+parse_status=failed
+  -> 展示 parse_error
+  -> 提供重新解析入口
+```
+
+### 2.5 新增结构化解析结果
+
+资料解析成功后，后端不只保存 `parsed_text`，还会生成 MVP 版结构化结果：
 
 ```text
 material_sections
 material_chunks
+material_figures
+material_tables
+material_formulas
 ```
 
-新增前端接口：
+新增接口：
 
 ```http
 GET /materials/{material_id}/sections
 GET /materials/{material_id}/chunks
 GET /materials/{material_id}/chunks?section_id=1
+GET /materials/{material_id}/figures
+GET /materials/{material_id}/tables
+GET /materials/{material_id}/formulas
 GET /materials/{material_id}/structured
 GET /study-targets/{target_id}/chunks?limit=200
 ```
@@ -133,9 +166,34 @@ GET /study-targets/{target_id}/chunks?limit=200
 前端影响：
 
 - 资料详情页可以展示章节目录和文本块。
-- 目标详情页可以展示当前目标下的资料片段列表。
+- 复杂 slides、几何题、流程图资料可以展示图片说明、表格和公式。
+- 目标学习页可以基于目标级 chunks 展示结构化资料片段。
 - AI 问答/出题仍由后端读取资料内容，前端不需要把 chunks 再传回 AI 接口。
+- 知识提炼、QA、出题、知识图谱仍可继续使用原有接口；chunks 主要是给更细粒度页面和 B 模块能力使用。
 - 如果 `parse_warning` 不为空，建议在资料卡片或详情页显示弱提示。
+- 前端仍不应该依赖完整 `parsed_text`，因为列表和详情接口不会返回它。
+
+`chunk_type` 当前可选：
+
+```text
+text
+definition
+formula
+example
+key_sentence
+```
+
+### 2.6 多模态视觉解析状态
+
+几何题、复杂 slides、公式图形等多模态视觉解析已经作为可选增强能力接入。
+
+当前接口层面不需要为多模态视觉解析新增独立页面流程：
+
+- 继续通过资料上传和解析状态流转。
+- 继续使用 `parse_status`、`parse_error`、`parse_warning`。
+- 视觉解析结果会合成为兼容版 `parsed_text`，并同步进入 `material_chunks`。
+- 图片说明、表格和公式可通过 `figures/tables/formulas/structured` 接口读取。
+- 如果视觉解析失败，后端仍保留基础 OCR 结果，不会让 OCR 成功资料整体失败。
 
 ## 3. 自动知识提炼与知识图谱变化
 
@@ -451,7 +509,10 @@ POST /materials(auto_parse=true)
   -> 返回 material.parse_status=parsing
   -> 前端轮询 GET /materials/{id}
   -> parsed:
+       如有 parse_warning，展示解析质量提示
+       可选调用 GET /materials/{id}/sections 或 /structured 展示章节目录
        启用 QA / 出题 / 图谱 / 提炼
+       可选调用 GET /study-targets/{target_id}/chunks 获取目标级结构化上下文
        刷新 GET /knowledge-graphs/{target_id}
   -> failed:
        展示 parse_error
@@ -496,8 +557,10 @@ POST /questions/generate
 1. `POST /materials` 上传后默认自动解析，不要重复无脑调用 parse。
 2. 解析是后台任务，不要把 parse 接口当作同步接口。
 3. AI 功能必须等资料 `parse_status=parsed`。
-4. 目标级 QA/出题推荐使用 `target_id`，单资料模式只是兼容和精确场景。
-5. 知识图谱可能是自动生成的，也可能需要用户手动刷新。
-6. 导出接口不是 JSON。
-7. 管理员接口需要 admin 角色。
-8. PDF/图片解析依赖 OCR 环境，失败时必须展示 `parse_error`。
+4. `parse_warning` 是质量提示，不是失败；资料仍可进入 AI 功能。
+5. 目标级 QA/出题推荐使用 `target_id`，单资料模式只是兼容和精确场景。
+6. 结构化资料接口已经可用，资料详情页可选展示 sections/chunks。
+7. 知识图谱可能是自动生成的，也可能需要用户手动刷新。
+8. 导出接口不是 JSON。
+9. 管理员接口需要 admin 角色。
+10. PDF/图片解析依赖 OCR 环境，失败时必须展示 `parse_error`，低质量时展示 `parse_warning`。

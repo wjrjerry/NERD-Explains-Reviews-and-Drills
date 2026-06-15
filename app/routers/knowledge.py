@@ -1,6 +1,8 @@
 """Routes for the unified AI knowledge extraction module."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -16,7 +18,7 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 @router.post("/extract", response_model=ApiResponse[KnowledgeExtractResponse])
 async def extract_knowledge(
-    payload: KnowledgeExtractRequest,
+    payload_data: dict = Body(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -25,6 +27,14 @@ async def extract_knowledge(
     - material_id: extract a summary for one parsed material.
     - target_id: extract an aggregated target summary and refresh the graph.
     """
+    if payload_data.get("material_id") is not None and payload_data.get("target_id") is not None:
+        payload_data = {**payload_data, "target_id": None}
+
+    try:
+        payload = KnowledgeExtractRequest.model_validate(payload_data)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
     try:
         result = await knowledge_service.extract_knowledge(
             db,
@@ -32,6 +42,11 @@ async def extract_knowledge(
             current_user=current_user,
         )
     except ValueError as exc:
+        if str(exc) == "资料未解析完成":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Material is not parsed yet.",
+            ) from exc
         return fail(code=40004, message=str(exc))
 
     return success(result)

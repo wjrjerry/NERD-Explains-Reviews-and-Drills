@@ -7,9 +7,3 @@ __pycache__/
 .ruff_cache/
 uploads/
 README.md
-frontend/node_modules/
-frontend/dist/
-frontend/*.tsbuildinfo
-frontend/vite.config.js
-frontend/vite.config.d.ts
-frontend_moved_from_root/

@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     pdf_ocr_max_pages: int = 20
     parsed_text_max_chars: int = 20000
 
+    vision_enabled: bool = False
+    vision_provider: str = "openrouter"
+    vision_api_key: str | None = None
+    vision_base_url: str = "https://openrouter.ai/api/v1"
+    vision_model: str = "google/gemini-3.1-flash-lite-preview"
+    vision_timeout_seconds: int = 60
+    vision_max_pages: int = 5
+    vision_max_image_bytes: int = 4_000_000
+    vision_response_format_json: bool = True
+    vision_fallback_on_ocr_failure: bool = True
+    vision_fallback_on_low_quality: bool = False
+
     ai_provider: str = "mock"
     ai_api_key: str | None = None
     ai_base_url: str | None = None
