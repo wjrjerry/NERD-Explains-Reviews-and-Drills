@@ -15,10 +15,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 16% 10%, rgba(80, 162, 255, 0.20), transparent 28%),
-    radial-gradient(circle at 82% 14%, rgba(73, 201, 154, 0.18), transparent 26%),
-    linear-gradient(145deg, #f8fbff 0%, #e9eff6 48%, #f4f6f3 100%);
+  background: linear-gradient(145deg, #f8fbff 0%, #e9eff6 48%, #f4f6f3 100%);
 }
 
 button,
@@ -899,6 +896,181 @@ blockquote {
   padding: 8px 10px;
   color: #007aff;
   background: rgba(0, 122, 255, 0.10);
+}
+
+.stat-bars,
+.reader-layout,
+.chunk-list,
+.section-nav,
+.mini-metrics {
+  display: grid;
+  gap: 10px;
+}
+
+.stat-bar {
+  display: grid;
+  grid-template-columns: 64px 1fr 36px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.stat-bar div {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.08);
+}
+
+.stat-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #98a2b3;
+}
+
+.stat-bar i.green,
+.mastery-dot.mastered,
+.graph-node.mastered {
+  background: #34c759;
+}
+
+.stat-bar i.blue,
+.graph-node.reviewing {
+  background: #007aff;
+}
+
+.stat-bar i.red,
+.mastery-dot.unmastered,
+.graph-node.unmastered {
+  background: #ff3b30;
+}
+
+.mastery-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18px, 1fr));
+  gap: 8px;
+}
+
+.mastery-dot {
+  display: block;
+  height: 18px;
+  border-radius: 5px;
+  background: #98a2b3;
+}
+
+.mastery-dot.reviewing {
+  background: #ffcc00;
+}
+
+.reader-layout {
+  grid-template-columns: minmax(150px, 0.42fr) 1fr;
+}
+
+.section-nav {
+  align-content: start;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.section-nav button {
+  min-height: 38px;
+  border-radius: 10px;
+  text-align: left;
+  color: #344054;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.chunk-list {
+  max-height: 480px;
+  overflow: auto;
+}
+
+.chunk-card {
+  border: 1px solid rgba(35, 47, 72, 0.08);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.chunk-card strong,
+.chunk-card span {
+  display: block;
+}
+
+.chunk-card span {
+  margin-top: 4px;
+  color: #6d7788;
+  font-size: 12px;
+}
+
+.chunk-card p {
+  margin: 8px 0 0;
+  line-height: 1.68;
+}
+
+.graph-layout {
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.6fr);
+}
+
+.graph-canvas {
+  display: flex;
+  align-items: center;
+  align-content: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 360px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid rgba(35, 47, 72, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.graph-node {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  border-radius: 999px;
+  padding: 10px;
+  color: #172033;
+  background: #d0d5dd;
+  box-shadow: 0 12px 24px rgba(44, 57, 82, 0.10);
+  text-align: center;
+}
+
+.graph-node.reviewing {
+  background: #ffcc00;
+}
+
+.graph-node.selected {
+  outline: 3px solid rgba(0, 122, 255, 0.24);
+  transform: translateY(-2px);
+}
+
+.graph-node strong {
+  max-width: 120px;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.graph-node span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mini-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mini-metrics span {
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(17, 24, 39, 0.06);
+  color: #344054;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .auth-screen {

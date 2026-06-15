@@ -7,15 +7,19 @@ import {
   CalendarDays,
   CheckCircle2,
   ClipboardCheck,
+  Download,
   FileText,
+  GitBranch,
   LayoutDashboard,
   LoaderCircle,
   LogOut,
   MessageSquare,
+  Network,
   Plus,
   RefreshCw,
   Shield,
   Sparkles,
+  TableOfContents,
   Trash2,
   Upload,
   UserCircle,
@@ -25,14 +29,17 @@ import { api, clearToken, getToken } from "./api";
 import type {
   Difficulty,
   HealthStatus,
+  KnowledgeGraph,
   KnowledgeResult,
   Material,
   MaterialPreview,
+  MaterialStructured,
   QaRecord,
   Question,
   QuestionType,
   ReviewPlan,
   StudyTarget,
+  TestRecord,
   TestSubmitAnswer,
   TestResult,
   User,
@@ -44,6 +51,7 @@ type View =
   | "targets"
   | "materials"
   | "detail"
+  | "graph"
   | "qa"
   | "practice"
   | "results"
@@ -63,6 +71,7 @@ const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard 
   { view: "targets", label: "目标管理", icon: BookOpen },
   { view: "materials", label: "资料库", icon: FileText },
   { view: "detail", label: "资料详情", icon: Brain },
+  { view: "graph", label: "知识图谱", icon: Network },
   { view: "qa", label: "AI 问答", icon: MessageSquare },
   { view: "practice", label: "AI 出题", icon: ClipboardCheck },
   { view: "results", label: "测试结果", icon: CheckCircle2 },
@@ -96,6 +105,9 @@ function App() {
   const [wrongQuestions, setWrongQuestions] = useState<WrongQuestion[]>([]);
   const [reviewPlans, setReviewPlans] = useState<ReviewPlan[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
+  const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [structured, setStructured] = useState<MaterialStructured | null>(null);
+  const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
   const [preview, setPreview] = useState<MaterialPreview | null>(null);
   const [health, setHealth] = useState<{ api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus }>({});
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
@@ -133,8 +145,24 @@ function App() {
     }
 
     setKnowledge(null);
+    setStructured(null);
     void loadMaterialContext(selectedMaterialId);
   }, [selectedMaterialId, user]);
+
+  useEffect(() => {
+    if (!selectedTargetId || !user) {
+      setKnowledgeGraph(null);
+      return;
+    }
+
+    void Promise.all([
+      api.getKnowledgeGraph(selectedTargetId).catch(() => null),
+      api.listTestRecords(1, 10, selectedTargetId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
+    ]).then(([graphData, recordData]) => {
+      setKnowledgeGraph(graphData);
+      setTestRecords(recordData.items);
+    });
+  }, [selectedTargetId, user]);
 
   async function initializeSession() {
     setLoading(true);
@@ -165,6 +193,14 @@ function App() {
     setWrongQuestions(wrongData.items);
     setReviewPlans(planData.items);
 
+    const firstTargetId = targetData.items[0]?.id;
+    const [recordData, graphData] = await Promise.all([
+      api.listTestRecords(1, 10, firstTargetId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
+      firstTargetId ? api.getKnowledgeGraph(firstTargetId).catch(() => null) : Promise.resolve(null)
+    ]);
+    setTestRecords(recordData.items);
+    setKnowledgeGraph(graphData);
+
     const nextTargetId = targetData.items[0]?.id ?? null;
     const nextMaterialId = materialData.items[0]?.id ?? null;
     setSelectedTargetId((current) => current ?? nextTargetId);
@@ -182,9 +218,10 @@ function App() {
 
   async function loadMaterialContext(materialId: number) {
     try {
-      const [detailData, previewData, qaHistoryData] = await Promise.all([
+      const [detailData, previewData, structuredData, qaHistoryData] = await Promise.all([
         api.getMaterial(materialId),
         api.getMaterialPreview(materialId).catch(() => null),
+        api.getMaterialStructured(materialId).catch(() => null),
         api.listQaHistory(1, 10, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
       ]);
 
@@ -192,9 +229,11 @@ function App() {
       if (previewData) {
         setPreview(previewData);
       }
+      setStructured(structuredData);
       setQaRecords(qaHistoryData.items);
     } catch (error) {
       setPreview(null);
+      setStructured(null);
       setQaRecords([]);
       setNotice({ tone: "danger", text: `资料上下文加载失败：${readMessage(error)}` });
     }
@@ -351,7 +390,7 @@ function App() {
       return;
     }
     try {
-      const data = await api.extractKnowledge(selectedMaterial.id, selectedMaterial.target_id);
+      const data = await api.extractKnowledge(selectedMaterial.id);
       setKnowledge(data);
       setNotice({ tone: "success", text: "知识提炼完成。" });
     } catch (error) {
@@ -439,6 +478,31 @@ function App() {
     }
   }
 
+  async function handleGenerateKnowledgeGraph() {
+    if (!selectedTargetId) {
+      setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
+      return;
+    }
+
+    try {
+      const graph = await api.generateKnowledgeGraph(selectedTargetId);
+      setKnowledgeGraph(graph);
+      setView("graph");
+      setNotice({ tone: "success", text: "知识图谱已生成。" });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `知识图谱生成失败：${readMessage(error)}` });
+    }
+  }
+
+  async function handleExport(action: () => Promise<void>, successText: string) {
+    try {
+      await action();
+      setNotice({ tone: "success", text: successText });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `导出失败：${readMessage(error)}` });
+    }
+  }
+
   function handleLogout() {
     clearToken();
     setUser(null);
@@ -450,6 +514,9 @@ function App() {
     setWrongQuestions([]);
     setReviewPlans([]);
     setKnowledge(null);
+    setKnowledgeGraph(null);
+    setStructured(null);
+    setTestRecords([]);
     setPreview(null);
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
@@ -523,6 +590,10 @@ function App() {
             parsedCount={parsedCount}
             failedCount={failedCount}
             daysLeft={daysLeft}
+            wrongQuestions={wrongQuestions}
+            reviewPlans={reviewPlans}
+            testRecords={testRecords}
+            knowledgeGraph={knowledgeGraph}
             onQuickView={(nextView) => setView(nextView)}
           />
         ) : null}
@@ -559,6 +630,7 @@ function App() {
             material={selectedMaterial}
             target={selectedTarget}
             preview={preview}
+            structured={structured}
             knowledge={knowledge}
             onParse={() => {
               if (selectedMaterial) {
@@ -566,8 +638,33 @@ function App() {
               }
             }}
             onExtract={handleExtractKnowledge}
+            onGenerateGraph={handleGenerateKnowledgeGraph}
+            onExportKnowledge={() => {
+              if (selectedTargetId) {
+                void handleExport(() => api.exportKnowledgeSummary(selectedTargetId), "知识总结已开始下载。");
+              }
+            }}
             onJumpToQa={() => setView("qa")}
             onJumpToPractice={() => setView("practice")}
+          />
+        ) : null}
+
+        {view === "graph" ? (
+          <KnowledgeGraphPage
+            target={selectedTarget}
+            graph={knowledgeGraph}
+            wrongQuestions={wrongQuestions}
+            onGenerate={handleGenerateKnowledgeGraph}
+            onExport={() => {
+              if (selectedTargetId) {
+                void handleExport(() => api.exportKnowledgeSummary(selectedTargetId), "知识总结已开始下载。");
+              }
+            }}
+            onExportAnki={() => {
+              if (selectedTargetId) {
+                void handleExport(() => api.exportAnki(selectedTargetId), "Anki CSV 已开始下载。");
+              }
+            }}
           />
         ) : null}
 
@@ -582,11 +679,25 @@ function App() {
         ) : null}
 
         {view === "wrong" ? (
-          <WrongQuestionsPage items={wrongQuestions} onUpdateMastery={handleUpdateMastery} />
+          <WrongQuestionsPage
+            items={wrongQuestions}
+            onUpdateMastery={handleUpdateMastery}
+            onExport={() =>
+              void handleExport(
+                () => api.exportWrongQuestions(selectedTargetId ?? undefined, selectedMaterialId ?? undefined),
+                "错题本已开始下载。"
+              )
+            }
+          />
         ) : null}
 
         {view === "plans" ? (
-          <ReviewPlansPage targets={targets} plans={reviewPlans} onGenerate={handleGenerateReviewPlan} />
+          <ReviewPlansPage
+            targets={targets}
+            plans={reviewPlans}
+            onGenerate={handleGenerateReviewPlan}
+            onExport={(planId) => void handleExport(() => api.exportReviewPlan(planId), "复习计划已开始下载。")}
+          />
         ) : null}
 
         {view === "admin" ? <AdminPage health={health} materials={materials} /> : null}
@@ -661,6 +772,10 @@ function Dashboard({
   parsedCount,
   failedCount,
   daysLeft,
+  wrongQuestions,
+  reviewPlans,
+  testRecords,
+  knowledgeGraph,
   onQuickView
 }: {
   targets: StudyTarget[];
@@ -668,8 +783,23 @@ function Dashboard({
   parsedCount: number;
   failedCount: number;
   daysLeft: number;
+  wrongQuestions: WrongQuestion[];
+  reviewPlans: ReviewPlan[];
+  testRecords: TestRecord[];
+  knowledgeGraph: KnowledgeGraph | null;
   onQuickView: (view: View) => void;
 }) {
+  const parseStats = [
+    { label: "可学习", value: parsedCount, tone: "green" },
+    { label: "解析中", value: materials.filter((item) => item.parse_status === "parsing").length, tone: "blue" },
+    { label: "失败", value: failedCount, tone: "red" },
+    { label: "待解析", value: materials.filter((item) => item.parse_status === "uploaded").length, tone: "" }
+  ];
+  const upcomingTasks = reviewPlans.flatMap((plan) => plan.tasks.filter((task) => !task.completed)).slice(0, 4);
+  const averageAccuracy = testRecords.length
+    ? Math.round((testRecords.reduce((sum, item) => sum + item.accuracy, 0) / testRecords.length) * 100)
+    : 0;
+
   return (
     <div className="grid dashboard-grid">
       <section className="hero-panel">
@@ -680,7 +810,7 @@ function Dashboard({
           <div className="quick-actions">
             <button onClick={() => onQuickView("targets")}><Plus size={16} />新建目标</button>
             <button onClick={() => onQuickView("materials")}><Upload size={16} />上传资料</button>
-            <button onClick={() => onQuickView("qa")}><MessageSquare size={16} />进入问答</button>
+            <button onClick={() => onQuickView("graph")}><Network size={16} />查看图谱</button>
           </div>
         </div>
         <div className="progress-ring">
@@ -693,6 +823,50 @@ function Dashboard({
       <MetricCard icon={FileText} label="资料总数" value={materials.length} hint="对应 /materials" />
       <MetricCard icon={Brain} label="可学习资料" value={parsedCount} hint="parse_status = parsed" />
       <MetricCard icon={AlertTriangle} label="失败资料" value={failedCount} hint="需关注 parse_error" />
+
+      <section className="panel">
+        <PanelTitle icon={FileText} title="资料解析状态" />
+        <div className="stat-bars">
+          {parseStats.map((item) => (
+            <div className="stat-bar" key={item.label}>
+              <span>{item.label}</span>
+              <div><i className={item.tone} style={{ width: `${materials.length ? Math.max(8, (item.value / materials.length) * 100) : 0}%` }} /></div>
+              <strong>{item.value}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <PanelTitle icon={GitBranch} title="知识点掌握" />
+        {knowledgeGraph?.nodes.length ? (
+          <div className="mastery-strip">
+            {knowledgeGraph.nodes.slice(0, 18).map((node) => (
+              <span key={node.id} className={`mastery-dot ${node.mastery_status}`} title={`${node.name} ${Math.round(node.mastery_score * 100)}%`} />
+            ))}
+          </div>
+        ) : (
+          <p className="muted-text">还没有生成知识图谱。</p>
+        )}
+      </section>
+
+      <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="GET /tests/records" />
+      <MetricCard icon={AlertTriangle} label="错题总数" value={wrongQuestions.length} hint="高频薄弱点入口" />
+
+      <section className="panel wide">
+        <PanelTitle icon={CalendarDays} title="即将复习任务" />
+        <div className="task-list">
+          {upcomingTasks.length ? upcomingTasks.map((task) => (
+            <div className="task-row" key={task.id}>
+              <CheckCircle2 size={18} />
+              <div>
+                <strong>{task.title}</strong>
+                <span>{task.date} · 待完成</span>
+              </div>
+            </div>
+          )) : <p className="muted-text">暂无待完成复习任务。</p>}
+        </div>
+      </section>
     </div>
   );
 }
@@ -858,18 +1032,24 @@ function MaterialDetailPage({
   material,
   target,
   preview,
+  structured,
   knowledge,
   onParse,
   onExtract,
+  onGenerateGraph,
+  onExportKnowledge,
   onJumpToQa,
   onJumpToPractice
 }: {
   material: Material | null;
   target: StudyTarget | null;
   preview: MaterialPreview | null;
+  structured: MaterialStructured | null;
   knowledge: KnowledgeResult | null;
   onParse: () => void;
   onExtract: () => void;
+  onGenerateGraph: () => void;
+  onExportKnowledge: () => void;
   onJumpToQa: () => void;
   onJumpToPractice: () => void;
 }) {
@@ -890,6 +1070,8 @@ function MaterialDetailPage({
           <div className="quick-actions">
             <button disabled={material.parse_status === "parsing"} onClick={onParse}><RefreshCw size={16} />解析资料</button>
             <button disabled={aiDisabled} onClick={onExtract}><Sparkles size={16} />知识提炼</button>
+            <button disabled={aiDisabled} onClick={onGenerateGraph}><Network size={16} />生成图谱</button>
+            <button disabled={!target} onClick={onExportKnowledge}><Download size={16} />导出总结</button>
             <button disabled={aiDisabled} onClick={onJumpToQa}><MessageSquare size={16} />AI 问答</button>
             <button disabled={aiDisabled} onClick={onJumpToPractice}><ClipboardCheck size={16} />AI 出题</button>
           </div>
@@ -899,6 +1081,15 @@ function MaterialDetailPage({
       <section className="panel">
         <PanelTitle icon={FileText} title="资料预览" />
         <p className="preview-box">{preview?.preview_text || "当前资料暂无文本预览。"}</p>
+      </section>
+
+      <section className="panel">
+        <PanelTitle icon={TableOfContents} title="结构化章节" />
+        {structured?.sections.length || structured?.chunks.length ? (
+          <StructuredReader structured={structured} />
+        ) : (
+          <p className="muted-text">暂无章节结构，解析完成后可查看 sections 与 chunks。</p>
+        )}
       </section>
 
       <section className="panel">
@@ -913,6 +1104,121 @@ function MaterialDetailPage({
           </div>
         ) : (
           <p className="muted-text">还没有知识提炼结果。</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function StructuredReader({ structured }: { structured: MaterialStructured }) {
+  const [activeSectionId, setActiveSectionId] = useState<number | null>(structured.sections[0]?.id ?? null);
+  const visibleChunks = structured.chunks.filter((chunk) => !activeSectionId || chunk.section_id === activeSectionId).slice(0, 12);
+
+  useEffect(() => {
+    setActiveSectionId(structured.sections[0]?.id ?? null);
+  }, [structured.material_id]);
+
+  return (
+    <div className="reader-layout">
+      <div className="section-nav">
+        {structured.sections.length ? structured.sections.map((section) => (
+          <button
+            key={section.id}
+            className={activeSectionId === section.id ? "active-pill" : ""}
+            style={{ paddingLeft: `${10 + section.level * 12}px` }}
+            onClick={() => setActiveSectionId(section.id)}
+          >
+            {section.title}
+          </button>
+        )) : <p className="muted-text">未识别出章节。</p>}
+      </div>
+      <div className="chunk-list">
+        {visibleChunks.length ? visibleChunks.map((chunk) => (
+          <article key={chunk.id} className="chunk-card">
+            <strong>{chunk.title || `文本块 ${chunk.order_index + 1}`}</strong>
+            <span>{chunk.chunk_type}{chunk.source_page ? ` · 第 ${chunk.source_page} 页` : ""}</span>
+            <p>{chunk.text}</p>
+          </article>
+        )) : <p className="muted-text">当前章节暂无文本块。</p>}
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeGraphPage({
+  target,
+  graph,
+  wrongQuestions,
+  onGenerate,
+  onExport,
+  onExportAnki
+}: {
+  target: StudyTarget | null;
+  graph: KnowledgeGraph | null;
+  wrongQuestions: WrongQuestion[];
+  onGenerate: () => void;
+  onExport: () => void;
+  onExportAnki: () => void;
+}) {
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const activeNode = graph?.nodes.find((node) => node.id === activeId) ?? graph?.nodes[0] ?? null;
+  const relatedWrong = activeNode
+    ? wrongQuestions.filter((item) => item.knowledge_points.some((point) => activeNode.name.includes(point) || point.includes(activeNode.name)))
+    : [];
+
+  useEffect(() => {
+    setActiveId(graph?.nodes[0]?.id ?? null);
+  }, [graph?.target_id, graph?.nodes.length]);
+
+  return (
+    <div className="two-column graph-layout">
+      <section className="panel wide">
+        <PanelTitle icon={Network} title="知识点图谱" action={target?.title} />
+        <div className="quick-actions">
+          <button onClick={onGenerate}><RefreshCw size={16} />生成/刷新图谱</button>
+          <button disabled={!target} onClick={onExport}><Download size={16} />导出知识总结</button>
+          <button disabled={!target} onClick={onExportAnki}><Download size={16} />导出 Anki CSV</button>
+        </div>
+        {graph?.nodes.length ? (
+          <div className="graph-canvas">
+            {graph.nodes.map((node) => (
+              <button
+                key={node.id}
+                className={`graph-node ${node.mastery_status} ${activeNode?.id === node.id ? "selected" : ""}`}
+                style={{
+                  width: `${56 + node.importance_weight * 42}px`,
+                  minHeight: `${44 + node.importance_weight * 30}px`
+                }}
+                onClick={() => setActiveId(node.id)}
+                title={`${node.name} · 正确率 ${Math.round(node.accuracy * 100)}%`}
+              >
+                <strong>{node.name}</strong>
+                <span>{Math.round(node.mastery_score * 100)}%</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyPanel text="当前目标还没有知识图谱，先生成图谱或完成资料解析。" />
+        )}
+      </section>
+
+      <section className="panel">
+        <PanelTitle icon={Brain} title="知识点详情" />
+        {activeNode ? (
+          <div className="detail-stack">
+            <h3>{activeNode.name}</h3>
+            <p>{activeNode.description ?? "暂无描述。"}</p>
+            <div className="mini-metrics">
+              <span>掌握度 {Math.round(activeNode.mastery_score * 100)}%</span>
+              <span>正确率 {Math.round(activeNode.accuracy * 100)}%</span>
+              <span>错题 {activeNode.wrong_count}</span>
+              <span>作答 {activeNode.answered_count}</span>
+            </div>
+            <InfoList title="关联资料片段" items={activeNode.materials.map((item) => item.evidence_text || `资料 ${item.material_id}`)} />
+            <InfoList title="关联错题" items={relatedWrong.map((item) => item.stem)} />
+          </div>
+        ) : (
+          <p className="muted-text">请选择一个知识点。</p>
         )}
       </section>
     </div>
@@ -1115,14 +1421,19 @@ function ResultsPage({
 
 function WrongQuestionsPage({
   items,
-  onUpdateMastery
+  onUpdateMastery,
+  onExport
 }: {
   items: WrongQuestion[];
   onUpdateMastery: (id: number, masteryStatus: WrongQuestion["mastery_status"]) => void;
+  onExport: () => void;
 }) {
   return (
     <section className="panel">
       <PanelTitle icon={AlertTriangle} title="错题本" />
+      <div className="quick-actions">
+        <button onClick={onExport}><Download size={16} />导出错题 Markdown</button>
+      </div>
       <div className="list">
         {items.map((item) => (
           <article className="list-item vertical" key={item.id}>
@@ -1148,11 +1459,13 @@ function WrongQuestionsPage({
 function ReviewPlansPage({
   targets,
   plans,
-  onGenerate
+  onGenerate,
+  onExport
 }: {
   targets: StudyTarget[];
   plans: ReviewPlan[];
   onGenerate: (formData: FormData) => void;
+  onExport: (planId: number) => void;
 }) {
   return (
     <div className="two-column">
@@ -1179,6 +1492,9 @@ function ReviewPlansPage({
                 </div>
               </div>
               <p>{plan.summary}</p>
+              <div className="quick-actions">
+                <button onClick={() => onExport(plan.id)}><Download size={16} />导出 Markdown</button>
+              </div>
               <div className="task-list">
                 {plan.tasks.map((task) => (
                   <div className="task-row" key={task.id}>
@@ -1302,6 +1618,7 @@ function pageTitle(view: View) {
     targets: "课程/考试目标管理",
     materials: "资料库管理",
     detail: "资料详情与 AI 学习",
+    graph: "知识图谱与掌握度",
     qa: "AI 问答页",
     practice: "AI 出题练习页",
     results: "自测结果页",

@@ -1,14 +1,17 @@
 import type {
   Difficulty,
   HealthStatus,
+  KnowledgeGraph,
   KnowledgeResult,
   Material,
   MaterialPreview,
+  MaterialStructured,
   QaRecord,
   QuestionType,
   Question,
   ReviewPlan,
   StudyTarget,
+  TestRecord,
   TestSubmitAnswer,
   TestResult,
   User,
@@ -58,6 +61,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return payload.data as T;
+}
+
+async function download(path: string, filename: string) {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(buildUrl(path), { headers });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(readErrorMessage(payload));
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function normalizeApiBase(value: unknown) {
@@ -141,12 +168,19 @@ export const api = {
   parseMaterial: (materialId: number) =>
     request<{ material: Material }>(`/materials/${materialId}/parse`, { method: "POST" }),
   getMaterialPreview: (materialId: number) => request<MaterialPreview>(`/materials/${materialId}/preview`),
+  getMaterialStructured: (materialId: number) => request<MaterialStructured>(`/materials/${materialId}/structured`),
   deleteMaterial: (materialId: number) => request<Record<string, never>>(`/materials/${materialId}`, { method: "DELETE" }),
 
-  extractKnowledge: (materialId: number, targetId: number) =>
+  extractKnowledge: (materialId: number) =>
     request<KnowledgeResult>("/knowledge/extract", {
       method: "POST",
-      body: JSON.stringify({ material_id: materialId, target_id: targetId })
+      body: JSON.stringify({ material_id: materialId })
+    }),
+  getKnowledgeGraph: (targetId: number) => request<KnowledgeGraph>(`/knowledge-graphs/${targetId}`),
+  generateKnowledgeGraph: (targetId: number, maxPoints = 20) =>
+    request<KnowledgeGraph>("/knowledge-graphs/generate", {
+      method: "POST",
+      body: JSON.stringify({ target_id: targetId, force_regenerate: true, max_points: maxPoints })
     }),
 
   askQuestion: (materialId: number, question: string) =>
@@ -170,6 +204,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ material_id: materialId, target_id: targetId, answers })
     }),
+  listTestRecords: (page = 1, pageSize = 10, targetId?: number, materialId?: number) =>
+    request<Pagination<TestRecord>>(
+      `/tests/records?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}${materialId ? `&material_id=${materialId}` : ""}`
+    ),
 
   listWrongQuestions: (page = 1, pageSize = 10, targetId?: number, materialId?: number) =>
     request<Pagination<WrongQuestion>>(
@@ -188,5 +226,14 @@ export const api = {
       body: JSON.stringify({ target_id: targetId, start_date: startDate, end_date: endDate })
     }),
   listReviewPlans: (page = 1, pageSize = 20, targetId?: number) =>
-    request<Pagination<ReviewPlan>>(`/review-plans?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}`)
+    request<Pagination<ReviewPlan>>(`/review-plans?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}`),
+
+  exportWrongQuestions: (targetId?: number, materialId?: number) =>
+    download(
+      `/exports/wrong-questions.md?${targetId ? `target_id=${targetId}&` : ""}${materialId ? `material_id=${materialId}` : ""}`,
+      "wrong-questions.md"
+    ),
+  exportReviewPlan: (planId: number) => download(`/exports/review-plan/${planId}.md`, `review-plan-${planId}.md`),
+  exportKnowledgeSummary: (targetId: number) => download(`/exports/knowledge-summary/${targetId}.md`, `knowledge-summary-${targetId}.md`),
+  exportAnki: (targetId: number) => download(`/exports/anki/${targetId}.csv`, `anki-${targetId}.csv`)
 };

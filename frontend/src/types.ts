@@ -58,6 +58,59 @@ export interface KnowledgeResult {
   exam_points: string[];
 }
 
+export interface KnowledgeGraphNode {
+  id: number;
+  parent_id: number | null;
+  name: string;
+  description: string | null;
+  importance_weight: number;
+  level: number;
+  sort_order: number;
+  mastery_status: MasteryStatus;
+  mastery_score: number;
+  accuracy: number;
+  answered_count: number;
+  wrong_count: number;
+  materials: Array<{
+    material_id: number;
+    evidence_text: string | null;
+    relevance_score: number;
+  }>;
+}
+
+export interface KnowledgeGraph {
+  target_id: number;
+  nodes: KnowledgeGraphNode[];
+  generated_at: string | null;
+}
+
+export interface MaterialSection {
+  id: number;
+  material_id: number;
+  parent_id: number | null;
+  title: string;
+  level: number;
+  order_index: number;
+  source_page: number | null;
+}
+
+export interface MaterialChunk {
+  id: number;
+  material_id: number;
+  section_id: number | null;
+  chunk_type: string;
+  title: string | null;
+  text: string;
+  order_index: number;
+  source_page: number | null;
+}
+
+export interface MaterialStructured {
+  material_id: number;
+  sections: MaterialSection[];
+  chunks: MaterialChunk[];
+}
+
 export interface QaReference {
   material_id: number;
   snippet: string;
@@ -119,6 +172,27 @@ export interface TestResult {
   correct_count: number;
   wrong_count: number;
   results: TestResultItem[];
+  knowledge_point_summary?: Array<{
+    knowledge_point_id: number;
+    total_count: number;
+    correct_count: number;
+    wrong_count: number;
+    accuracy: number;
+    average_score: number;
+  }>;
+}
+
+export interface TestRecord {
+  id: number;
+  user_id: number;
+  material_id: number;
+  target_id: number | null;
+  score: number;
+  accuracy: number;
+  total_count: number;
+  correct_count: number;
+  wrong_count: number;
+  created_at: string;
 }
 
 export interface WrongQuestion {
