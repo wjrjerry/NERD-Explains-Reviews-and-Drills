@@ -151,6 +151,10 @@ function App() {
     () => materials.find((item) => item.id === selectedMaterialId) ?? null,
     [materials, selectedMaterialId]
   );
+  const visibleMaterials = useMemo(
+    () => (selectedTargetId ? materials.filter((item) => item.target_id === selectedTargetId) : []),
+    [materials, selectedTargetId]
+  );
 
   const parsedCount = materials.filter((item) => item.parse_status === "parsed").length;
   const failedCount = materials.filter((item) => item.parse_status === "failed").length;
@@ -178,6 +182,25 @@ function App() {
     setSourcePreview(null);
     void loadMaterialContext(selectedMaterialId);
   }, [selectedMaterialId, user]);
+
+  useEffect(() => {
+    if (!selectedTargetId || !selectedMaterialId) {
+      return;
+    }
+    const selectedStillInTarget = materials.some(
+      (material) => material.id === selectedMaterialId && material.target_id === selectedTargetId
+    );
+    if (!selectedStillInTarget) {
+      setSelectedMaterialId(null);
+      setKnowledge(null);
+      setStructured(null);
+      setPreview(null);
+      setSourcePreview(null);
+      if (view === "detail") {
+        setView("materials");
+      }
+    }
+  }, [materials, selectedMaterialId, selectedTargetId, view]);
 
   useEffect(() => {
     return () => {
@@ -481,7 +504,7 @@ function App() {
 
   async function handleUploadMaterial(formData: FormData) {
     const file = formData.get("file");
-    const targetId = Number(formData.get("target_id"));
+    const targetId = selectedTargetId;
     if (!(file instanceof File) || !targetId) {
       setNotice({ tone: "danger", text: "请先选择目标和资料文件。" });
       return;
@@ -501,10 +524,15 @@ function App() {
   async function handleDeleteMaterial(materialId: number) {
     try {
       await api.deleteMaterial(materialId);
+      const deletedMaterial = materials.find((item) => item.id === materialId);
       const nextMaterials = materials.filter((item) => item.id !== materialId);
       setMaterials(nextMaterials);
       if (selectedMaterialId === materialId) {
-        setSelectedMaterialId(nextMaterials[0]?.id ?? null);
+        const nextMaterialInTarget = nextMaterials.find((item) => item.target_id === deletedMaterial?.target_id) ?? null;
+        setSelectedMaterialId(nextMaterialInTarget?.id ?? null);
+        if (view === "detail") {
+          setView("materials");
+        }
       }
       setNotice({ tone: "info", text: "资料已删除。" });
     } catch (error) {
@@ -771,8 +799,14 @@ function App() {
         {view === "materials" ? (
           <MaterialsPage
             targets={targets}
-            materials={materials}
+            materials={visibleMaterials}
+            selectedTarget={selectedTarget}
+            selectedTargetId={selectedTargetId}
             selectedMaterialId={selectedMaterialId}
+            onSelectTarget={(targetId) => {
+              setSelectedTargetId(targetId);
+              setSelectedMaterialId(null);
+            }}
             onSelect={(material) => {
               setSelectedMaterialId(material.id);
               setSelectedTargetId(material.target_id);
@@ -1103,7 +1137,10 @@ function TargetsPage({
 function MaterialsPage({
   targets,
   materials,
+  selectedTarget,
+  selectedTargetId,
   selectedMaterialId,
+  onSelectTarget,
   onSelect,
   onUpload,
   onParse,
@@ -1111,7 +1148,10 @@ function MaterialsPage({
 }: {
   targets: StudyTarget[];
   materials: Material[];
+  selectedTarget: StudyTarget | null;
+  selectedTargetId: number | null;
   selectedMaterialId: number | null;
+  onSelectTarget: (targetId: number) => void;
   onSelect: (material: Material) => void;
   onUpload: (formData: FormData) => void;
   onParse: (materialId: number) => void;
@@ -1129,9 +1169,12 @@ function MaterialsPage({
         }}
       >
         <PanelTitle icon={Upload} title="上传资料" action="POST /materials" />
-        <select name="target_id" defaultValue={targets[0]?.id}>
-          {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
-        </select>
+        <div className="target-scope-card">
+          <span>当前目标</span>
+          <strong>{selectedTarget?.title ?? "未选择学习目标"}</strong>
+          <small>{selectedTarget ? "上传资料会自动加入该目标" : "请先在下方选择目标后再上传资料"}</small>
+        </div>
+        <input type="hidden" name="target_id" value={selectedTargetId ?? ""} />
         <label className="drop-zone">
           <Upload size={28} />
           <span>选择 PDF / TXT / 图片资料</span>
@@ -1155,13 +1198,23 @@ function MaterialsPage({
         ) : (
           <p className="form-hint">还没有选择文件。</p>
         )}
-        <button className="primary-button" type="submit"><Upload size={16} />上传并入库</button>
+        <button className="primary-button" type="submit" disabled={!selectedTargetId}><Upload size={16} />上传并入库</button>
       </form>
 
       <section className="panel">
-        <PanelTitle icon={FileText} title="资料列表" />
+        <PanelTitle icon={FileText} title="资料列表" action={selectedTarget?.title ?? "请选择目标"} />
+        <label className="field-block">
+          <span>按学习目标筛选</span>
+          <select
+            value={selectedTargetId ?? ""}
+            onChange={(event) => onSelectTarget(Number(event.currentTarget.value))}
+          >
+            <option value="" disabled>请选择学习目标</option>
+            {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+          </select>
+        </label>
         <div className="list">
-          {materials.map((material) => (
+          {materials.length ? materials.map((material) => (
             <div key={material.id} className={`list-item ${selectedMaterialId === material.id ? "selected-row" : ""}`}>
               <button className="material-row material-row-inline" onClick={() => onSelect(material)}>
                 <div>
@@ -1183,7 +1236,13 @@ function MaterialsPage({
                 <Trash2 size={16} />
               </button>
             </div>
-          ))}
+          )) : (
+            <div className="source-empty">
+              <p className="muted-text">
+                {selectedTarget ? "当前目标还没有资料，可以上传 PDF/TXT/图片。" : "请先选择学习目标。"}
+              </p>
+            </div>
+          )}
         </div>
       </section>
     </div>
@@ -1227,12 +1286,12 @@ function MaterialDetailPage({
     <div className="grid learn-grid">
       <section className="panel wide">
         <div className="subpage-header">
-          <button className="ghost-button compact-button" onClick={onBack}>
-            <FileText size={16} />
-            返回资料库
-          </button>
           <div>
-            <span>资料库 / 资料详情</span>
+            <span className="breadcrumb-line">
+              <button type="button" onClick={onBack}>资料库</button>
+              <i>/</i>
+              <em>资料详情</em>
+            </span>
             <strong>{material.original_filename}</strong>
           </div>
           <StatusBadge status={material.parse_status} />

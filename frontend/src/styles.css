@@ -432,6 +432,27 @@ p {
   gap: 12px;
 }
 
+.target-scope-card {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(0, 122, 255, 0.14);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(0, 122, 255, 0.07);
+}
+
+.target-scope-card span,
+.target-scope-card small {
+  color: #566173;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.target-scope-card strong {
+  color: #1f3658;
+  font-size: 17px;
+}
+
 .primary-button {
   display: inline-flex;
   align-items: center;
@@ -620,6 +641,26 @@ p {
   color: #6d7788;
   font-size: 13px;
   font-weight: 800;
+}
+
+.breadcrumb-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.breadcrumb-line button {
+  padding: 0;
+  color: #007aff;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.breadcrumb-line i,
+.breadcrumb-line em {
+  color: #6d7788;
+  font-style: normal;
 }
 
 .subpage-header strong {
