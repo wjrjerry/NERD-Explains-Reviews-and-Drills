@@ -1158,53 +1158,19 @@ function MaterialsPage({
   onDelete: (materialId: number) => void;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const parsingCount = materials.filter((material) => material.parse_status === "parsing").length;
+  const failedCount = materials.filter((material) => material.parse_status === "failed").length;
+  const parsedCount = materials.filter((material) => material.parse_status === "parsed").length;
 
   return (
-    <div className="two-column">
-      <form
-        className="panel form-panel"
-        onSubmit={(event) => {
-          submitForm(event, onUpload);
-          setSelectedFile(null);
-        }}
-      >
-        <PanelTitle icon={Upload} title="上传资料" action="POST /materials" />
-        <div className="target-scope-card">
-          <span>当前目标</span>
-          <strong>{selectedTarget?.title ?? "未选择学习目标"}</strong>
-          <small>{selectedTarget ? "上传资料会自动加入该目标" : "请先在下方选择目标后再上传资料"}</small>
+    <div className="material-library-page">
+      <section className="panel material-library-toolbar">
+        <div className="toolbar-copy">
+          <PanelTitle icon={FileText} title="资料库" action={selectedTarget?.title ?? "请选择目标"} />
+          <p className="muted-text">当前页面只展示所选学习目标下的资料，上传的新资料也会自动加入该目标。</p>
         </div>
-        <input type="hidden" name="target_id" value={selectedTargetId ?? ""} />
-        <label className="drop-zone">
-          <Upload size={28} />
-          <span>选择 PDF / TXT / 图片资料</span>
-          <small>上传后后端会自动解析；TXT 最稳定，PDF/图片会尝试 OCR</small>
-          <input
-            name="file"
-            type="file"
-            accept=".pdf,.txt,image/*"
-            required
-            onChange={(event) => setSelectedFile(event.currentTarget.files?.[0] ?? null)}
-          />
-        </label>
-        {selectedFile ? (
-          <div className="selected-file">
-            <FileText size={16} />
-            <div>
-              <strong>{selectedFile.name}</strong>
-              <span>{formatBytes(selectedFile.size)} · {selectedFile.type || "未知类型"}</span>
-            </div>
-          </div>
-        ) : (
-          <p className="form-hint">还没有选择文件。</p>
-        )}
-        <button className="primary-button" type="submit" disabled={!selectedTargetId}><Upload size={16} />上传并入库</button>
-      </form>
-
-      <section className="panel">
-        <PanelTitle icon={FileText} title="资料列表" action={selectedTarget?.title ?? "请选择目标"} />
-        <label className="field-block">
-          <span>按学习目标筛选</span>
+        <label className="field-block target-switcher">
+          <span>当前学习目标</span>
           <select
             value={selectedTargetId ?? ""}
             onChange={(event) => onSelectTarget(Number(event.currentTarget.value))}
@@ -1213,38 +1179,88 @@ function MaterialsPage({
             {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
           </select>
         </label>
-        <div className="list">
-          {materials.length ? materials.map((material) => (
-            <div key={material.id} className={`list-item ${selectedMaterialId === material.id ? "selected-row" : ""}`}>
-              <button className="material-row material-row-inline" onClick={() => onSelect(material)}>
-                <div>
-                  <strong>{material.original_filename}</strong>
-                  <span>{formatBytes(material.file_size)} · {material.file_type.toUpperCase()}</span>
-                  {material.parse_warning ? <small className="warning-text">解析质量提示：{material.parse_warning}</small> : null}
-                </div>
-              </button>
-              <StatusBadge status={material.parse_status} />
-              <button
-                className="ghost-button compact-button"
-                disabled={material.parse_status === "parsing"}
-                onClick={() => onParse(material.id)}
-              >
-                <RefreshCw size={16} />
-                {getParseActionText(material.parse_status)}
-              </button>
-              <button className="icon-button" title="删除资料" onClick={() => onDelete(material.id)}>
-                <Trash2 size={16} />
-              </button>
-            </div>
-          )) : (
-            <div className="source-empty">
-              <p className="muted-text">
-                {selectedTarget ? "当前目标还没有资料，可以上传 PDF/TXT/图片。" : "请先选择学习目标。"}
-              </p>
-            </div>
-          )}
+        <div className="library-stats">
+          <span><strong>{materials.length}</strong> 份资料</span>
+          <span><strong>{parsedCount}</strong> 可学习</span>
+          <span><strong>{parsingCount}</strong> 解析中</span>
+          <span><strong>{failedCount}</strong> 失败</span>
         </div>
       </section>
+
+      <div className="two-column">
+        <form
+          className="panel form-panel"
+          onSubmit={(event) => {
+            submitForm(event, onUpload);
+            setSelectedFile(null);
+          }}
+        >
+          <PanelTitle icon={Upload} title="上传资料" action="POST /materials" />
+          <p className="form-hint">
+            {selectedTarget ? `上传后会加入当前目标：${selectedTarget.title}` : "请先在上方选择学习目标。"}
+          </p>
+          <label className="drop-zone">
+            <Upload size={28} />
+            <span>选择 PDF / TXT / 图片资料</span>
+            <small>上传后后端会自动解析；TXT 最稳定，PDF/图片会尝试 OCR</small>
+            <input
+              name="file"
+              type="file"
+              accept=".pdf,.txt,image/*"
+              required
+              disabled={!selectedTargetId}
+              onChange={(event) => setSelectedFile(event.currentTarget.files?.[0] ?? null)}
+            />
+          </label>
+          {selectedFile ? (
+            <div className="selected-file">
+              <FileText size={16} />
+              <div>
+                <strong>{selectedFile.name}</strong>
+                <span>{formatBytes(selectedFile.size)} · {selectedFile.type || "未知类型"}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="form-hint">还没有选择文件。</p>
+          )}
+          <button className="primary-button" type="submit" disabled={!selectedTargetId}><Upload size={16} />上传并入库</button>
+        </form>
+
+        <section className="panel">
+          <PanelTitle icon={FileText} title="资料列表" action={`${materials.length} 份`} />
+          <div className="list">
+            {materials.length ? materials.map((material) => (
+              <div key={material.id} className={`list-item material-list-item ${selectedMaterialId === material.id ? "selected-row" : ""}`}>
+                <button className="material-row material-row-inline" onClick={() => onSelect(material)}>
+                  <div>
+                    <strong>{material.original_filename}</strong>
+                    <span>{formatBytes(material.file_size)} · {material.file_type.toUpperCase()}</span>
+                    {material.parse_warning ? <small className="warning-text">解析质量提示：{material.parse_warning}</small> : null}
+                  </div>
+                </button>
+                <StatusBadge status={material.parse_status} />
+                <button
+                  className="ghost-button compact-button"
+                  disabled={material.parse_status === "parsing"}
+                  onClick={() => onParse(material.id)}
+                >
+                  <RefreshCw size={16} />
+                  {getParseActionText(material.parse_status)}
+                </button>
+                <button className="icon-button" title="删除资料" onClick={() => onDelete(material.id)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            )) : (
+              <div className="source-empty">
+                <p className="muted-text">
+                  {selectedTarget ? "当前目标还没有资料，可以上传 PDF/TXT/图片。" : "请先选择学习目标。"}
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1293,14 +1309,13 @@ function MaterialDetailPage({
               <em>资料详情</em>
             </span>
             <strong>{material.original_filename}</strong>
+            <small>所属目标：{target?.title ?? "未匹配"} · {formatBytes(material.file_size)} · {material.file_type.toUpperCase()}</small>
           </div>
           <StatusBadge status={material.parse_status} />
         </div>
-        <PanelTitle icon={Brain} title="资料详情与 AI 学习" />
         <div className="detail-header">
           <div>
-            <h2>{material.original_filename}</h2>
-            <p>所属目标：{target?.title ?? "未匹配"} · 状态：{parseStatusText[material.parse_status]}</p>
+            <p>状态：{parseStatusText[material.parse_status]}</p>
             {material.parse_error ? <p className="danger-text">{material.parse_error}</p> : null}
             {material.parse_warning ? <p className="warning-text">{material.parse_warning}</p> : null}
             <p className={`flow-status ${material.parse_status}`}>
@@ -1933,7 +1948,7 @@ function pageTitle(view: View) {
     dashboard: "学生首页 / 仪表盘",
     targets: "课程/考试目标管理",
     materials: "资料库管理",
-    detail: "资料库 / 资料详情",
+    detail: "资料详情",
     graph: "知识图谱与掌握度",
     qa: "AI 问答页",
     practice: "AI 出题练习页",

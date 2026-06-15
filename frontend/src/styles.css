@@ -426,31 +426,58 @@ p {
   gap: 16px;
 }
 
+.material-library-page {
+  display: grid;
+  gap: 16px;
+}
+
+.material-library-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px) auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.material-library-toolbar .panel-title {
+  margin-bottom: 8px;
+}
+
+.toolbar-copy {
+  min-width: 0;
+}
+
+.target-switcher {
+  min-width: 0;
+}
+
+.library-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.library-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 8px 10px;
+  color: #566173;
+  background: rgba(255, 255, 255, 0.70);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.library-stats strong {
+  color: #172033;
+}
+
 .form-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.target-scope-card {
-  display: grid;
-  gap: 5px;
-  border: 1px solid rgba(0, 122, 255, 0.14);
-  border-radius: 16px;
-  padding: 12px;
-  background: rgba(0, 122, 255, 0.07);
-}
-
-.target-scope-card span,
-.target-scope-card small {
-  color: #566173;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.target-scope-card strong {
-  color: #1f3658;
-  font-size: 17px;
 }
 
 .primary-button {
@@ -518,8 +545,30 @@ p {
   padding: 0;
 }
 
+.material-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+}
+
 .material-row div {
+  display: grid;
   flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+
+.material-row strong,
+.material-row span,
+.material-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.material-row strong {
+  color: #1f3658;
+  font-size: 16px;
 }
 
 .material-row.selected {
@@ -668,8 +717,10 @@ p {
   font-size: 20px;
 }
 
-.detail-header h2 {
-  font-size: 30px;
+.subpage-header small {
+  color: #6d7788;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .detail-header p,
@@ -1363,7 +1414,8 @@ blockquote {
 
   .topbar,
   .hero-panel,
-  .detail-header {
+  .detail-header,
+  .material-library-toolbar {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -1379,9 +1431,19 @@ blockquote {
   .admin-grid,
   .two-column,
   .qa-layout,
+  .material-library-toolbar,
   .option-grid,
   .auth-screen {
     grid-template-columns: 1fr;
+  }
+
+  .library-stats {
+    justify-content: flex-start;
+  }
+
+  .material-list-item {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .flow-line {
