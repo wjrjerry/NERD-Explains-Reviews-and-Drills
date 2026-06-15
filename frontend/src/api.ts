@@ -87,6 +87,22 @@ async function download(path: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+async function requestBlob(path: string) {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(buildUrl(path), { headers });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(readErrorMessage(payload));
+  }
+
+  return response.blob();
+}
+
 function normalizeApiBase(value: unknown) {
   const base = typeof value === "string" ? value.trim() : "";
   if (!base) {
@@ -168,6 +184,7 @@ export const api = {
   parseMaterial: (materialId: number) =>
     request<{ material: Material }>(`/materials/${materialId}/parse`, { method: "POST" }),
   getMaterialPreview: (materialId: number) => request<MaterialPreview>(`/materials/${materialId}/preview`),
+  getMaterialFile: (materialId: number) => requestBlob(`/materials/${materialId}/file`),
   getMaterialStructured: (materialId: number) => request<MaterialStructured>(`/materials/${materialId}/structured`),
   deleteMaterial: (materialId: number) => request<Record<string, never>>(`/materials/${materialId}`, { method: "DELETE" }),
 

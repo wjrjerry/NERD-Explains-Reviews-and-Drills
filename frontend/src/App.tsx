@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Download,
+  ExternalLink,
   FileText,
   GitBranch,
   LayoutDashboard,
@@ -64,6 +65,13 @@ type NoticeTone = "info" | "success" | "danger" | "warning";
 type Notice = {
   tone: NoticeTone;
   text: string;
+};
+
+type MaterialSourcePreview = {
+  materialId: number;
+  url: string;
+  contentType: string;
+  fileType: Material["file_type"];
 };
 
 const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard }> = [
@@ -127,6 +135,7 @@ function App() {
   const [structured, setStructured] = useState<MaterialStructured | null>(null);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
   const [preview, setPreview] = useState<MaterialPreview | null>(null);
+  const [sourcePreview, setSourcePreview] = useState<MaterialSourcePreview | null>(null);
   const [health, setHealth] = useState<{ api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus }>({});
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
@@ -161,13 +170,23 @@ function App() {
 
   useEffect(() => {
     if (!selectedMaterialId || !user) {
+      setSourcePreview(null);
       return;
     }
 
     setKnowledge(null);
     setStructured(null);
+    setSourcePreview(null);
     void loadMaterialContext(selectedMaterialId);
   }, [selectedMaterialId, user]);
+
+  useEffect(() => {
+    return () => {
+      if (sourcePreview?.url) {
+        URL.revokeObjectURL(sourcePreview.url);
+      }
+    };
+  }, [sourcePreview?.url]);
 
   useEffect(() => {
     if (!selectedTargetId || !user) {
@@ -270,9 +289,10 @@ function App() {
 
   async function loadMaterialContext(materialId: number) {
     try {
-      const [detailData, previewData, structuredData, qaHistoryData] = await Promise.all([
+      const [detailData, previewData, sourceFileBlob, structuredData, qaHistoryData] = await Promise.all([
         api.getMaterial(materialId),
         api.getMaterialPreview(materialId).catch(() => null),
+        api.getMaterialFile(materialId).catch(() => null),
         api.getMaterialStructured(materialId).catch(() => null),
         api.listQaHistory(1, 10, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
       ]);
@@ -281,10 +301,21 @@ function App() {
       if (previewData) {
         setPreview(previewData);
       }
+      if (sourceFileBlob) {
+        setSourcePreview({
+          materialId,
+          url: URL.createObjectURL(sourceFileBlob),
+          contentType: sourceFileBlob.type,
+          fileType: detailData.material.file_type
+        });
+      } else {
+        setSourcePreview(null);
+      }
       setStructured(structuredData);
       setQaRecords(qaHistoryData.items);
     } catch (error) {
       setPreview(null);
+      setSourcePreview(null);
       setStructured(null);
       setQaRecords([]);
       setNotice({ tone: "danger", text: `资料上下文加载失败：${readMessage(error)}` });
@@ -347,6 +378,7 @@ function App() {
         parsePollAttemptsRef.current.delete(materialId);
         if (selectedMaterialId === materialId) {
           setPreview(null);
+          setSourcePreview(null);
           setStructured(null);
         }
         setNotice({ tone: "danger", text: data.material.parse_error ?? "资料解析失败，可检查文件后重试。" });
@@ -644,6 +676,7 @@ function App() {
     setStructured(null);
     setTestRecords([]);
     setPreview(null);
+    setSourcePreview(null);
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
     setNotice({ tone: "info", text: "已退出登录。" });
@@ -756,6 +789,7 @@ function App() {
             material={selectedMaterial}
             target={selectedTarget}
             preview={preview}
+            sourcePreview={sourcePreview}
             structured={structured}
             knowledge={knowledge}
             onParse={() => {
@@ -1159,6 +1193,7 @@ function MaterialDetailPage({
   material,
   target,
   preview,
+  sourcePreview,
   structured,
   knowledge,
   onParse,
@@ -1171,6 +1206,7 @@ function MaterialDetailPage({
   material: Material | null;
   target: StudyTarget | null;
   preview: MaterialPreview | null;
+  sourcePreview: MaterialSourcePreview | null;
   structured: MaterialStructured | null;
   knowledge: KnowledgeResult | null;
   onParse: () => void;
@@ -1223,6 +1259,11 @@ function MaterialDetailPage({
         </p>
       </section>
 
+      <section className="panel source-panel">
+        <PanelTitle icon={ExternalLink} title="源文件预览" />
+        <SourceFilePreview material={material} sourcePreview={sourcePreview} />
+      </section>
+
       <section className="panel">
         <PanelTitle icon={TableOfContents} title="结构化章节" />
         {structured?.sections.length || structured?.chunks.length ? (
@@ -1255,6 +1296,51 @@ function MaterialDetailPage({
           <p className="muted-text">还没有知识提炼结果。</p>
         )}
       </section>
+    </div>
+  );
+}
+
+function SourceFilePreview({
+  material,
+  sourcePreview
+}: {
+  material: Material;
+  sourcePreview: MaterialSourcePreview | null;
+}) {
+  const isCurrentSource = sourcePreview?.materialId === material.id;
+
+  if (!isCurrentSource || !sourcePreview) {
+    return (
+      <div className="source-empty">
+        <p className="muted-text">源文件正在加载，或当前资料文件暂不可预览。</p>
+      </div>
+    );
+  }
+
+  const contentType = sourcePreview.contentType.toLowerCase();
+  const isPdf = sourcePreview.fileType === "pdf" || contentType.includes("pdf");
+  const isImage = sourcePreview.fileType === "image" || contentType.startsWith("image/");
+  const isText = sourcePreview.fileType === "txt" || contentType.startsWith("text/");
+
+  return (
+    <div className="source-preview">
+      <div className="source-actions">
+        <span>{material.file_type.toUpperCase()} · {material.content_type || "未知 MIME"}</span>
+        <a href={sourcePreview.url} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} />
+          新窗口打开
+        </a>
+      </div>
+
+      {isImage ? (
+        <img src={sourcePreview.url} alt={material.original_filename} />
+      ) : isPdf || isText ? (
+        <iframe src={sourcePreview.url} title={material.original_filename} />
+      ) : (
+        <div className="source-empty">
+          <p className="muted-text">浏览器无法直接预览该文件类型，请使用新窗口打开。</p>
+        </div>
+      )}
     </div>
   );
 }

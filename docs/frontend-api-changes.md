@@ -153,6 +153,7 @@ material_formulas
 新增接口：
 
 ```http
+GET /materials/{material_id}/file
 GET /materials/{material_id}/sections
 GET /materials/{material_id}/chunks
 GET /materials/{material_id}/chunks?section_id=1
@@ -165,6 +166,7 @@ GET /study-targets/{target_id}/chunks?limit=200
 
 前端影响：
 
+- 资料详情页可以通过 `/materials/{material_id}/file` 获取源文件 Blob，并在页面内预览 PDF、TXT 和图片。
 - 资料详情页可以展示章节目录和文本块。
 - 复杂 slides、几何题、流程图资料可以展示图片说明、表格和公式。
 - 目标学习页可以基于目标级 chunks 展示结构化资料片段。
