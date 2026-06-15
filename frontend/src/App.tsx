@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Download,
+  ExternalLink,
   FileText,
   GitBranch,
   LayoutDashboard,
@@ -64,18 +65,24 @@ type View =
   | "usage"
   | "admin";
 
-type NoticeTone = "info" | "success" | "danger";
+type NoticeTone = "info" | "success" | "danger" | "warning";
 
 type Notice = {
   tone: NoticeTone;
   text: string;
 };
 
+type MaterialSourcePreview = {
+  materialId: number;
+  url: string;
+  contentType: string;
+  fileType: Material["file_type"];
+};
+
 const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard }> = [
   { view: "dashboard", label: "仪表盘", icon: LayoutDashboard },
   { view: "targets", label: "目标管理", icon: BookOpen },
   { view: "materials", label: "资料库", icon: FileText },
-  { view: "detail", label: "资料详情", icon: Brain },
   { view: "graph", label: "知识图谱", icon: Network },
   { view: "qa", label: "AI 问答", icon: MessageSquare },
   { view: "practice", label: "AI 出题", icon: ClipboardCheck },
@@ -92,6 +99,24 @@ const parseStatusText: Record<Material["parse_status"], string> = {
   parsed: "可学习",
   failed: "解析失败"
 };
+
+const parsePollMaxAttempts = 30;
+const parsePollIntervalMs = 2500;
+
+function getParseActionText(status: Material["parse_status"]) {
+  if (status === "parsing") return "解析中";
+  if (status === "parsed") return "重解析";
+  if (status === "failed") return "重试解析";
+  return "解析";
+}
+
+function getMaterialStateHint(material: Material) {
+  if (material.parse_status === "parsing") return "资料正在解析，完成后会自动刷新。";
+  if (material.parse_status === "uploaded") return "等待后台解析或手动触发解析。";
+  if (material.parse_status === "failed") return material.parse_error ?? "解析失败，可重试解析。";
+  if (material.parse_warning) return "资料已解析，但解析质量可能影响 AI 回答和出题。";
+  return "资料已解析，结构化内容和知识图谱会自动刷新。";
+}
 
 const questionTypeOptions: Array<{ value: QuestionType; label: string }> = [
   { value: "single_choice", label: "单选题" },
@@ -117,12 +142,15 @@ function App() {
   const [preview, setPreview] = useState<MaterialPreview | null>(null);
   const [aiUsageSummary, setAiUsageSummary] = useState<AiUsageSummary | null>(null);
   const [aiUsageLogs, setAiUsageLogs] = useState<AiUsageLogItem[]>([]);
+  const [sourcePreview, setSourcePreview] = useState<MaterialSourcePreview | null>(null);
   const [health, setHealth] = useState<{ api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus }>({});
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
   const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const parsePollAttemptsRef = useRef<Map<number, number>>(new Map());
+  const parsePollInFlightRef = useRef<Set<number>>(new Set());
 
   const selectedTarget = useMemo(
     () => targets.find((item) => item.id === selectedTargetId) ?? null,
@@ -135,6 +163,10 @@ function App() {
   const focusedKnowledgePoints = useMemo(
     () => knowledgeGraph?.nodes.filter((node) => focusedKnowledgePointIds.includes(node.id)) ?? [],
     [focusedKnowledgePointIds, knowledgeGraph]
+  );
+  const visibleMaterials = useMemo(
+    () => (selectedTargetId ? materials.filter((item) => item.target_id === selectedTargetId) : []),
+    [materials, selectedTargetId]
   );
 
   const parsedCount = materials.filter((item) => item.parse_status === "parsed").length;
@@ -154,13 +186,42 @@ function App() {
 
   useEffect(() => {
     if (!selectedMaterialId || !user) {
+      setSourcePreview(null);
       return;
     }
 
     setKnowledge(null);
     setStructured(null);
+    setSourcePreview(null);
     void loadMaterialContext(selectedMaterialId);
   }, [selectedMaterialId, user]);
+
+  useEffect(() => {
+    if (!selectedTargetId || !selectedMaterialId) {
+      return;
+    }
+    const selectedStillInTarget = materials.some(
+      (material) => material.id === selectedMaterialId && material.target_id === selectedTargetId
+    );
+    if (!selectedStillInTarget) {
+      setSelectedMaterialId(null);
+      setKnowledge(null);
+      setStructured(null);
+      setPreview(null);
+      setSourcePreview(null);
+      if (view === "detail") {
+        setView("materials");
+      }
+    }
+  }, [materials, selectedMaterialId, selectedTargetId, view]);
+
+  useEffect(() => {
+    return () => {
+      if (sourcePreview?.url) {
+        URL.revokeObjectURL(sourcePreview.url);
+      }
+    };
+  }, [sourcePreview?.url]);
 
   useEffect(() => {
     if (!selectedTargetId || !user) {
@@ -178,16 +239,36 @@ function App() {
   }, [selectedTargetId, user]);
 
   useEffect(() => {
-    if (!user || !materials.some((item) => item.parse_status === "parsing")) {
+    if (!user) {
+      parsePollAttemptsRef.current.clear();
       return;
     }
 
-    const timer = window.setInterval(() => {
-      void refreshParsingMaterials();
-    }, 2500);
+    const parsingIds = materials.filter((material) => material.parse_status === "parsing").map((material) => material.id);
+    if (!parsingIds.length) {
+      parsePollAttemptsRef.current.clear();
+      return;
+    }
 
-    return () => window.clearInterval(timer);
-  }, [user, materials, selectedMaterialId, selectedTargetId]);
+    for (const [materialId] of parsePollAttemptsRef.current) {
+      if (!parsingIds.includes(materialId)) {
+        parsePollAttemptsRef.current.delete(materialId);
+      }
+    }
+
+    const newParsingIds = parsingIds.filter((materialId) => !parsePollAttemptsRef.current.has(materialId));
+    newParsingIds.forEach((materialId) => {
+      void pollMaterialParseStatus(materialId);
+    });
+
+    const intervalId = window.setInterval(() => {
+      parsingIds.forEach((materialId) => {
+        void pollMaterialParseStatus(materialId);
+      });
+    }, parsePollIntervalMs);
+
+    return () => window.clearInterval(intervalId);
+  }, [materials, user]);
 
   async function initializeSession() {
     setLoading(true);
@@ -256,9 +337,10 @@ function App() {
 
   async function loadMaterialContext(materialId: number) {
     try {
-      const [detailData, previewData, structuredData, qaHistoryData] = await Promise.all([
+      const [detailData, previewData, sourceFileBlob, structuredData, qaHistoryData] = await Promise.all([
         api.getMaterial(materialId),
         api.getMaterialPreview(materialId).catch(() => null),
+        api.getMaterialFile(materialId).catch(() => null),
         api.getMaterialStructured(materialId).catch(() => null),
         api.listQaHistory(1, 10, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
       ]);
@@ -267,55 +349,94 @@ function App() {
       if (previewData) {
         setPreview(previewData);
       }
+      if (sourceFileBlob) {
+        setSourcePreview({
+          materialId,
+          url: URL.createObjectURL(sourceFileBlob),
+          contentType: sourceFileBlob.type,
+          fileType: detailData.material.file_type
+        });
+      } else {
+        setSourcePreview(null);
+      }
       setStructured(structuredData);
       setQaRecords(qaHistoryData.items);
     } catch (error) {
       setPreview(null);
+      setSourcePreview(null);
       setStructured(null);
       setQaRecords([]);
       setNotice({ tone: "danger", text: `资料上下文加载失败：${readMessage(error)}` });
     }
   }
 
-  async function refreshParsingMaterials() {
-    const parsingMaterials = materials.filter((item) => item.parse_status === "parsing");
-    if (!parsingMaterials.length) {
+  async function refreshMaterialLearningContext(material: Material) {
+    if (selectedMaterialId === material.id) {
+      const [previewData, structuredData, qaHistoryData] = await Promise.all([
+        api.getMaterialPreview(material.id).catch(() => null),
+        api.getMaterialStructured(material.id).catch(() => null),
+        api.listQaHistory(1, 10, material.id).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 }))
+      ]);
+      setPreview(previewData);
+      setStructured(structuredData);
+      setQaRecords(qaHistoryData.items);
+    }
+
+    const [graphData, extractionData] = await Promise.all([
+      api.getKnowledgeGraph(material.target_id).catch(() => null),
+      api.extractKnowledge({ target_id: material.target_id, force_regenerate: false }).catch(() => null)
+    ]);
+
+    if (selectedTargetId === material.target_id || selectedMaterialId === material.id) {
+      setKnowledgeGraph(extractionData?.knowledge_graph ?? graphData);
+      if (extractionData) {
+        setKnowledge(extractionData);
+      }
+    }
+  }
+
+  async function pollMaterialParseStatus(materialId: number) {
+    if (parsePollInFlightRef.current.has(materialId)) {
       return;
     }
 
-    const settled = await Promise.allSettled(parsingMaterials.map((item) => api.getMaterial(item.id)));
-    const updates = settled
-      .filter((item): item is PromiseFulfilledResult<{ material: Material }> => item.status === "fulfilled")
-      .map((item) => item.value.material);
-
-    if (!updates.length) {
+    const attempts = (parsePollAttemptsRef.current.get(materialId) ?? 0) + 1;
+    if (attempts > parsePollMaxAttempts) {
+      parsePollAttemptsRef.current.delete(materialId);
+      setNotice({ tone: "warning", text: "资料仍在解析中，可稍后刷新或进入资料详情查看最新状态。" });
       return;
     }
+    parsePollAttemptsRef.current.set(materialId, attempts);
+    parsePollInFlightRef.current.add(materialId);
 
-    const updateMap = new Map(updates.map((item) => [item.id, item]));
-    const finished = updates.filter((item) => item.parse_status === "parsed" || item.parse_status === "failed");
+    try {
+      const data = await api.getMaterial(materialId);
+      setMaterials((current) => current.map((item) => (item.id === materialId ? data.material : item)));
 
-    setMaterials((current) => current.map((item) => updateMap.get(item.id) ?? item));
-
-    if (selectedMaterialId && finished.some((item) => item.id === selectedMaterialId)) {
-      await loadMaterialContext(selectedMaterialId).catch(() => undefined);
-    }
-
-    if (selectedTargetId && finished.some((item) => item.target_id === selectedTargetId)) {
-      const graph = await api.getKnowledgeGraph(selectedTargetId).catch(() => null);
-      setKnowledgeGraph(graph);
-    }
-
-    const selectedFinished = finished.find((item) => item.id === selectedMaterialId);
-    if (selectedFinished?.parse_status === "parsed") {
-      setNotice({
-        tone: "success",
-        text: selectedFinished.parse_warning
-          ? "资料解析完成，但解析质量有提示；AI 功能已启用，建议先校对内容。"
-          : "资料解析完成，AI 学习功能已启用。"
-      });
-    } else if (selectedFinished?.parse_status === "failed") {
-      setNotice({ tone: "danger", text: selectedFinished.parse_error ?? "资料解析失败，可查看详情后重试。" });
+      if (data.material.parse_status === "parsed") {
+        parsePollAttemptsRef.current.delete(materialId);
+        await refreshMaterialLearningContext(data.material);
+        setNotice({
+          tone: data.material.parse_warning ? "warning" : "success",
+          text: data.material.parse_warning
+            ? "资料解析完成，但解析质量可能影响 AI 回答和出题。"
+            : "资料解析完成，结构化内容和知识图谱已刷新。"
+        });
+      } else if (data.material.parse_status === "failed") {
+        parsePollAttemptsRef.current.delete(materialId);
+        if (selectedMaterialId === materialId) {
+          setPreview(null);
+          setSourcePreview(null);
+          setStructured(null);
+        }
+        setNotice({ tone: "danger", text: data.material.parse_error ?? "资料解析失败，可检查文件后重试。" });
+      }
+    } catch {
+      if (attempts >= parsePollMaxAttempts) {
+        setNotice({ tone: "warning", text: "资料解析状态暂时无法同步，请稍后刷新页面重试。" });
+      }
+    } finally {
+      parsePollInFlightRef.current.delete(materialId);
     }
   }
 
@@ -409,7 +530,7 @@ function App() {
 
   async function handleUploadMaterial(formData: FormData) {
     const file = formData.get("file");
-    const targetId = Number(formData.get("target_id"));
+    const targetId = selectedTargetId;
     if (!(file instanceof File) || !targetId) {
       setNotice({ tone: "danger", text: "请先选择目标和资料文件。" });
       return;
@@ -429,10 +550,15 @@ function App() {
   async function handleDeleteMaterial(materialId: number) {
     try {
       await api.deleteMaterial(materialId);
+      const deletedMaterial = materials.find((item) => item.id === materialId);
       const nextMaterials = materials.filter((item) => item.id !== materialId);
       setMaterials(nextMaterials);
       if (selectedMaterialId === materialId) {
-        setSelectedMaterialId(nextMaterials[0]?.id ?? null);
+        const nextMaterialInTarget = nextMaterials.find((item) => item.target_id === deletedMaterial?.target_id) ?? null;
+        setSelectedMaterialId(nextMaterialInTarget?.id ?? null);
+        if (view === "detail") {
+          setView("materials");
+        }
       }
       setNotice({ tone: "info", text: "资料已删除。" });
     } catch (error) {
@@ -446,14 +572,23 @@ function App() {
         item.id === materialId ? { ...item, parse_status: "parsing", parse_error: null, parse_warning: null } : item
       )
     );
+    parsePollAttemptsRef.current.set(materialId, 0);
 
     try {
       const data = await api.parseMaterial(materialId);
       setMaterials((current) => current.map((item) => (item.id === materialId ? data.material : item)));
       if (data.material.parse_status === "parsed") {
-        setNotice({ tone: "success", text: "资料解析完成，AI 学习功能已启用。" });
+        await refreshMaterialLearningContext(data.material);
+        setNotice({
+          tone: data.material.parse_warning ? "warning" : "success",
+          text: data.material.parse_warning
+            ? "资料解析完成，但解析质量可能影响 AI 回答和出题。"
+            : "资料解析完成，结构化内容和知识图谱已刷新。"
+        });
       } else if (data.material.parse_status === "failed") {
         setNotice({ tone: "danger", text: data.material.parse_error ?? "资料解析失败。" });
+      } else if (data.material.parse_status === "parsing") {
+        setNotice({ tone: "info", text: "资料正在后台解析，完成后会自动刷新。" });
       } else {
         setNotice({ tone: "info", text: "已提交后台解析任务，页面会自动刷新解析状态。" });
       }
@@ -676,6 +811,7 @@ function App() {
     setPreview(null);
     setAiUsageSummary(null);
     setAiUsageLogs([]);
+    setSourcePreview(null);
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
     setFocusedKnowledgePointIds([]);
@@ -706,8 +842,9 @@ function App() {
         <nav>
           {navItems.map((item) => {
             const Icon = item.icon;
+            const isActive = view === item.view || (view === "detail" && item.view === "materials");
             return (
-              <button key={item.view} className={view === item.view ? "active" : ""} onClick={() => setView(item.view)}>
+              <button key={item.view} className={isActive ? "active" : ""} onClick={() => setView(item.view)}>
                 <Icon size={18} />
                 <span>{item.label}</span>
               </button>
@@ -730,7 +867,6 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <p className="eyebrow">已连接后端接口</p>
             <h1>{pageTitle(view)}</h1>
           </div>
           <button className="ghost-button" onClick={() => void initializeSession()}>
@@ -772,8 +908,14 @@ function App() {
         {view === "materials" ? (
           <MaterialsPage
             targets={targets}
-            materials={materials}
+            materials={visibleMaterials}
+            selectedTarget={selectedTarget}
+            selectedTargetId={selectedTargetId}
             selectedMaterialId={selectedMaterialId}
+            onSelectTarget={(targetId) => {
+              setSelectedTargetId(targetId);
+              setSelectedMaterialId(null);
+            }}
             onSelect={(material) => {
               setSelectedMaterialId(material.id);
               setSelectedTargetId(material.target_id);
@@ -790,6 +932,7 @@ function App() {
             material={selectedMaterial}
             target={selectedTarget}
             preview={preview}
+            sourcePreview={sourcePreview}
             structured={structured}
             knowledge={knowledge}
             onParse={() => {
@@ -807,6 +950,7 @@ function App() {
             }}
             onJumpToQa={() => setView("qa")}
             onJumpToPractice={() => setView("practice")}
+            onBack={() => setView("materials")}
           />
         ) : null}
 
@@ -1140,7 +1284,10 @@ function TargetsPage({
 function MaterialsPage({
   targets,
   materials,
+  selectedTarget,
+  selectedTargetId,
   selectedMaterialId,
+  onSelectTarget,
   onSelect,
   onUpload,
   onParse,
@@ -1148,83 +1295,119 @@ function MaterialsPage({
 }: {
   targets: StudyTarget[];
   materials: Material[];
+  selectedTarget: StudyTarget | null;
+  selectedTargetId: number | null;
   selectedMaterialId: number | null;
+  onSelectTarget: (targetId: number) => void;
   onSelect: (material: Material) => void;
   onUpload: (formData: FormData) => void;
   onParse: (materialId: number) => void;
   onDelete: (materialId: number) => void;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const parsingCount = materials.filter((material) => material.parse_status === "parsing").length;
+  const failedCount = materials.filter((material) => material.parse_status === "failed").length;
+  const parsedCount = materials.filter((material) => material.parse_status === "parsed").length;
 
   return (
-    <div className="two-column">
-      <form
-        className="panel form-panel"
-        onSubmit={(event) => {
-          submitForm(event, onUpload);
-          setSelectedFile(null);
-        }}
-      >
-        <PanelTitle icon={Upload} title="上传资料" action="POST /materials" />
-        <select name="target_id" defaultValue={targets[0]?.id}>
-          {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
-        </select>
-        <label className="drop-zone">
-          <Upload size={28} />
-          <span>选择 PDF / TXT / 图片资料</span>
-          <small>上传后默认自动进入后台解析；TXT 最稳定，PDF/图片会尝试 OCR</small>
-          <input
-            name="file"
-            type="file"
-            accept=".pdf,.txt,image/*"
-            required
-            onChange={(event) => setSelectedFile(event.currentTarget.files?.[0] ?? null)}
-          />
+    <div className="material-library-page">
+      <section className="panel material-library-toolbar">
+        <div className="toolbar-copy">
+          <PanelTitle icon={FileText} title="资料库" action={selectedTarget?.title ?? "请选择目标"} />
+          <p className="muted-text">当前页面只展示所选学习目标下的资料，上传的新资料也会自动加入该目标。</p>
+        </div>
+        <label className="field-block target-switcher">
+          <span>当前学习目标</span>
+          <select
+            value={selectedTargetId ?? ""}
+            onChange={(event) => onSelectTarget(Number(event.currentTarget.value))}
+          >
+            <option value="" disabled>请选择学习目标</option>
+            {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+          </select>
         </label>
-        {selectedFile ? (
-          <div className="selected-file">
-            <FileText size={16} />
-            <div>
-              <strong>{selectedFile.name}</strong>
-              <span>{formatBytes(selectedFile.size)} · {selectedFile.type || "未知类型"}</span>
-            </div>
-          </div>
-        ) : (
-          <p className="form-hint">还没有选择文件。</p>
-        )}
-        <button className="primary-button" type="submit"><Upload size={16} />上传并入库</button>
-      </form>
-
-      <section className="panel">
-        <PanelTitle icon={FileText} title="资料列表" />
-        <div className="list">
-          {materials.map((material) => (
-            <div key={material.id} className={`list-item ${selectedMaterialId === material.id ? "selected-row" : ""}`}>
-              <button className="material-row material-row-inline" onClick={() => onSelect(material)}>
-                <div>
-                  <strong>{material.original_filename}</strong>
-                  <span>
-                    {formatBytes(material.file_size)} · {material.file_type.toUpperCase()}
-                    {material.parse_warning ? " · 解析质量提示" : ""}
-                  </span>
-                </div>
-              </button>
-              <StatusBadge status={material.parse_status} />
-              <button
-                className="ghost-button compact-button"
-                disabled={material.parse_status === "parsing"}
-                onClick={() => onParse(material.id)}
-              >
-                <RefreshCw size={16} />
-                {material.parse_status === "parsed" ? "重解析" : "解析"}
-              </button>
-              <button className="icon-button" title="删除资料" onClick={() => onDelete(material.id)}>
-                <Trash2 size={16} />
-              </button>
-            </div>
-          ))}
+        <div className="library-stats">
+          <span><strong>{materials.length}</strong> 份资料</span>
+          <span><strong>{parsedCount}</strong> 可学习</span>
+          <span><strong>{parsingCount}</strong> 解析中</span>
+          <span><strong>{failedCount}</strong> 失败</span>
         </div>
       </section>
+
+      <div className="two-column">
+        <form
+          className="panel form-panel"
+          onSubmit={(event) => {
+            submitForm(event, onUpload);
+            setSelectedFile(null);
+          }}
+        >
+          <PanelTitle icon={Upload} title="上传资料" action="POST /materials" />
+          <p className="form-hint">
+            {selectedTarget ? `上传后会加入当前目标：${selectedTarget.title}` : "请先在上方选择学习目标。"}
+          </p>
+          <label className="drop-zone">
+            <Upload size={28} />
+            <span>选择 PDF / TXT / 图片资料</span>
+            <small>上传后后端会自动解析；TXT 最稳定，PDF/图片会尝试 OCR</small>
+            <input
+              name="file"
+              type="file"
+              accept=".pdf,.txt,image/*"
+              required
+              disabled={!selectedTargetId}
+              onChange={(event) => setSelectedFile(event.currentTarget.files?.[0] ?? null)}
+            />
+          </label>
+          {selectedFile ? (
+            <div className="selected-file">
+              <FileText size={16} />
+              <div>
+                <strong>{selectedFile.name}</strong>
+                <span>{formatBytes(selectedFile.size)} · {selectedFile.type || "未知类型"}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="form-hint">还没有选择文件。</p>
+          )}
+          <button className="primary-button" type="submit" disabled={!selectedTargetId}><Upload size={16} />上传并入库</button>
+        </form>
+
+        <section className="panel">
+          <PanelTitle icon={FileText} title="资料列表" action={`${materials.length} 份`} />
+          <div className="list">
+            {materials.length ? materials.map((material) => (
+              <div key={material.id} className={`list-item material-list-item ${selectedMaterialId === material.id ? "selected-row" : ""}`}>
+                <button className="material-row material-row-inline" onClick={() => onSelect(material)}>
+                  <div>
+                    <strong>{material.original_filename}</strong>
+                    <span>{formatBytes(material.file_size)} · {material.file_type.toUpperCase()}</span>
+                    {material.parse_warning ? <small className="warning-text">解析质量提示：{material.parse_warning}</small> : null}
+                  </div>
+                </button>
+                <StatusBadge status={material.parse_status} />
+                <button
+                  className="ghost-button compact-button"
+                  disabled={material.parse_status === "parsing"}
+                  onClick={() => onParse(material.id)}
+                >
+                  <RefreshCw size={16} />
+                  {getParseActionText(material.parse_status)}
+                </button>
+                <button className="icon-button" title="删除资料" onClick={() => onDelete(material.id)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            )) : (
+              <div className="source-empty">
+                <p className="muted-text">
+                  {selectedTarget ? "当前目标还没有资料，可以上传 PDF/TXT/图片。" : "请先选择学习目标。"}
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1233,6 +1416,7 @@ function MaterialDetailPage({
   material,
   target,
   preview,
+  sourcePreview,
   structured,
   knowledge,
   onParse,
@@ -1241,11 +1425,13 @@ function MaterialDetailPage({
   onGenerateGraph,
   onExportKnowledge,
   onJumpToQa,
-  onJumpToPractice
+  onJumpToPractice,
+  onBack
 }: {
   material: Material | null;
   target: StudyTarget | null;
   preview: MaterialPreview | null;
+  sourcePreview: MaterialSourcePreview | null;
   structured: MaterialStructured | null;
   knowledge: KnowledgeResult | null;
   onParse: () => void;
@@ -1255,6 +1441,7 @@ function MaterialDetailPage({
   onExportKnowledge: () => void;
   onJumpToQa: () => void;
   onJumpToPractice: () => void;
+  onBack: () => void;
 }) {
   if (!material) return <EmptyPanel text="请先在资料库中选择一份资料。" />;
 
@@ -1263,13 +1450,26 @@ function MaterialDetailPage({
   return (
     <div className="grid learn-grid">
       <section className="panel wide">
-        <PanelTitle icon={Brain} title="资料详情与 AI 学习" />
+        <div className="subpage-header">
+          <div>
+            <span className="breadcrumb-line">
+              <button type="button" onClick={onBack}>资料库</button>
+              <i>/</i>
+              <em>资料详情</em>
+            </span>
+            <strong>{material.original_filename}</strong>
+            <small>所属目标：{target?.title ?? "未匹配"} · {formatBytes(material.file_size)} · {material.file_type.toUpperCase()}</small>
+          </div>
+          <StatusBadge status={material.parse_status} />
+        </div>
         <div className="detail-header">
           <div>
-            <h2>{material.original_filename}</h2>
-            <p>所属目标：{target?.title ?? "未匹配"} · 状态：{parseStatusText[material.parse_status]}</p>
+            <p>状态：{parseStatusText[material.parse_status]}</p>
             {material.parse_error ? <p className="danger-text">{material.parse_error}</p> : null}
             {material.parse_warning ? <p className="warning-text">{material.parse_warning}</p> : null}
+            <p className={`flow-status ${material.parse_status}`}>
+              {getMaterialStateHint(material)}
+            </p>
           </div>
           <div className="quick-actions">
             <button disabled={material.parse_status === "parsing"} onClick={onParse}><RefreshCw size={16} />解析资料</button>
@@ -1285,10 +1485,21 @@ function MaterialDetailPage({
 
       <section className="panel">
         <PanelTitle icon={FileText} title="资料预览" />
-        {material.parse_status === "parsing" ? (
-          <p className="muted-text">资料正在后台解析，完成后会自动刷新预览、结构化章节和图谱。</p>
-        ) : null}
-        <p className="preview-box">{preview?.preview_text || "当前资料暂无文本预览。"}</p>
+        <p className="preview-box">
+          {preview?.preview_text ||
+            (material.parse_status === "parsing"
+              ? "资料正在解析，完成后会自动刷新预览。"
+              : material.parse_status === "uploaded"
+                ? "等待后台解析或手动触发解析。"
+                : material.parse_status === "failed"
+                  ? "资料解析失败，暂无文本预览。"
+                  : "当前资料暂无文本预览。")}
+        </p>
+      </section>
+
+      <section className="panel source-panel">
+        <PanelTitle icon={ExternalLink} title="源文件预览" />
+        <SourceFilePreview material={material} sourcePreview={sourcePreview} />
       </section>
 
       <section className="panel">
@@ -1299,7 +1510,15 @@ function MaterialDetailPage({
             <StructuredArtifacts structured={structured} />
           </>
         ) : (
-          <p className="muted-text">暂无章节结构，解析完成后可查看 sections 与 chunks。</p>
+          <p className="muted-text">
+            {material.parse_status === "parsing"
+              ? "资料正在解析，完成后会自动刷新章节结构。"
+              : material.parse_status === "uploaded"
+                ? "等待后台解析或手动触发解析。"
+                : material.parse_status === "failed"
+                  ? "资料解析失败，修复后可重试解析。"
+                  : "已解析，但未识别出章节结构，可继续使用预览和 AI 功能。"}
+          </p>
         )}
       </section>
 
@@ -1307,6 +1526,7 @@ function MaterialDetailPage({
         <PanelTitle icon={Bot} title="知识提炼结果" />
         {knowledge ? (
           <div className="detail-stack">
+            {knowledge.scope ? <span className="subtle-pill">{knowledge.scope === "target" ? "目标级知识提炼" : "资料级知识提炼"}</span> : null}
             <p>{knowledge.summary}</p>
             <InfoList title="提纲" items={knowledge.outline} />
             <InfoList title="关键词" items={knowledge.keywords} />
@@ -1317,6 +1537,51 @@ function MaterialDetailPage({
           <p className="muted-text">还没有知识提炼结果。</p>
         )}
       </section>
+    </div>
+  );
+}
+
+function SourceFilePreview({
+  material,
+  sourcePreview
+}: {
+  material: Material;
+  sourcePreview: MaterialSourcePreview | null;
+}) {
+  const isCurrentSource = sourcePreview?.materialId === material.id;
+
+  if (!isCurrentSource || !sourcePreview) {
+    return (
+      <div className="source-empty">
+        <p className="muted-text">源文件正在加载，或当前资料文件暂不可预览。</p>
+      </div>
+    );
+  }
+
+  const contentType = sourcePreview.contentType.toLowerCase();
+  const isPdf = sourcePreview.fileType === "pdf" || contentType.includes("pdf");
+  const isImage = sourcePreview.fileType === "image" || contentType.startsWith("image/");
+  const isText = sourcePreview.fileType === "txt" || contentType.startsWith("text/");
+
+  return (
+    <div className="source-preview">
+      <div className="source-actions">
+        <span>{material.file_type.toUpperCase()} · {material.content_type || "未知 MIME"}</span>
+        <a href={sourcePreview.url} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} />
+          新窗口打开
+        </a>
+      </div>
+
+      {isImage ? (
+        <img src={sourcePreview.url} alt={material.original_filename} />
+      ) : isPdf || isText ? (
+        <iframe src={sourcePreview.url} title={material.original_filename} />
+      ) : (
+        <div className="source-empty">
+          <p className="muted-text">浏览器无法直接预览该文件类型，请使用新窗口打开。</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1962,7 +2227,15 @@ function AdminPage({
 function NoticeBar({ notice, onClose }: { notice: Notice; onClose: () => void }) {
   return (
     <div className={`toast ${notice.tone}`}>
-      {notice.tone === "danger" ? <XCircle size={16} /> : notice.tone === "success" ? <CheckCircle2 size={16} /> : <Sparkles size={16} />}
+      {notice.tone === "danger" ? (
+        <XCircle size={16} />
+      ) : notice.tone === "success" ? (
+        <CheckCircle2 size={16} />
+      ) : notice.tone === "warning" ? (
+        <AlertTriangle size={16} />
+      ) : (
+        <Sparkles size={16} />
+      )}
       <span>{notice.text}</span>
       <button onClick={onClose}>关闭</button>
     </div>
@@ -2034,7 +2307,7 @@ function pageTitle(view: View) {
     dashboard: "学生首页 / 仪表盘",
     targets: "课程/考试目标管理",
     materials: "资料库管理",
-    detail: "资料详情与 AI 学习",
+    detail: "资料详情",
     graph: "知识图谱与掌握度",
     qa: "AI 问答页",
     practice: "AI 出题练习页",

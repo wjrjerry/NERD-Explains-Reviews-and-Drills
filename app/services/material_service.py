@@ -179,6 +179,29 @@ class MaterialService:
         return material, preview_text, "success"
 
     @staticmethod
+    async def get_source_file(
+        db: AsyncSession,
+        *,
+        current_user: User,
+        material_id: int,
+    ) -> tuple[Material, Path]:
+        """获取当前用户资料的原始文件路径。
+
+        该方法只返回已通过归属校验的文件，供受认证的文件预览/下载接口使用。
+        """
+        material = await MaterialService.get_detail(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+
+        file_path = Path(material.file_path)
+        if not file_path.exists() or not file_path.is_file():
+            raise ValueError("资料文件不存在")
+
+        return material, file_path
+
+    @staticmethod
     async def get_parsed_material(
         db: AsyncSession,
         *,

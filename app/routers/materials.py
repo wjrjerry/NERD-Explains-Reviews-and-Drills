@@ -1,4 +1,7 @@
+from mimetypes import guess_type
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -142,6 +145,34 @@ async def preview_material(
             preview_text=preview_text,
             message=message,
         )
+    )
+
+
+@router.get("/{material_id}/file", response_class=FileResponse)
+async def get_material_source_file(
+    material_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """读取资料源文件。
+
+    用于前端在已登录状态下预览用户上传的 PDF、TXT 和图片源文件。
+    """
+    try:
+        material, file_path = await MaterialService.get_source_file(
+            db,
+            current_user=current_user,
+            material_id=material_id,
+        )
+    except ValueError:
+        return fail(code=40402, message="资料文件不存在")
+
+    media_type = material.content_type or guess_type(material.original_filename)[0] or "application/octet-stream"
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=material.original_filename,
+        content_disposition_type="inline",
     )
 
 
