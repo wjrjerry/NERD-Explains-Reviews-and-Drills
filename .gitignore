@@ -209,6 +209,18 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Project runtime files
+uploads/
+.codex-run/
+
+# Frontend dependencies and generated outputs
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend_moved_from_root/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
