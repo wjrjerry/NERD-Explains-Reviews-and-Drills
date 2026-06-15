@@ -4,6 +4,124 @@ import re
 from app.core.config import settings
 from app.services import llm_service
 
+KNOWLEDGE_INPUT_MAX_CHARS = 12000
+
+ENGLISH_KEYWORD_STOPWORDS = {
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "also",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "doing",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "him",
+    "his",
+    "how",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "itself",
+    "just",
+    "may",
+    "might",
+    "more",
+    "most",
+    "must",
+    "no",
+    "nor",
+    "not",
+    "of",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "our",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "so",
+    "some",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "whether",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+}
+
 
 def _normalize_text(text: str) -> str:
     """Collapse whitespace so mock extraction is stable for different inputs."""
@@ -74,15 +192,19 @@ def generate_knowledge(
     data or a real LLM provider, as long as the returned structure matches
     KnowledgeExtractResponse.
     """
-    # TODO: Accept parsed material text as input.
-    # TODO: Accept optional target/course context if prompt quality needs it.
-    # TODO: First return deterministic mock data for frontend integration.
-    # TODO: Return summary, outline, keywords, key_points, and exam_points.
-    # TODO: Later replace mock logic with a real LLM call.
-    # TODO: Record AI call status, latency, and failure reason when logging is ready.
     text = _normalize_text(parsed_text)
+    if settings.ai_provider != "mock":
+        return _generate_knowledge_with_real_ai(
+            text,
+            target_name=target_name,
+        )
+
     sentences = _split_sentences(text)
-    keywords = _extract_mock_keywords(text)
+    keywords = _normalize_keywords(
+        _extract_mock_keywords(text),
+        fallback_text=text,
+        limit=6,
+    )
 
     if not text:
         summary = "当前资料暂无可用于知识提炼的文本内容。"
@@ -279,6 +401,179 @@ def _normalize_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _is_meaningful_keyword(keyword: str) -> bool:
+    """Reject filler words that are not useful learning keywords."""
+    candidate = keyword.strip(" \t\r\n,.;:!?，。；：！？、()（）[]【】{}“”\"'")
+    if not candidate or candidate.isdigit():
+        return False
+
+    has_chinese = bool(re.search(r"[\u4e00-\u9fff]", candidate))
+    if has_chinese:
+        return len(candidate) >= 2
+
+    if candidate.isascii():
+        lowered = candidate.lower()
+        tokens = re.findall(r"[a-z0-9]+", lowered)
+        if not tokens:
+            return False
+        if len(tokens) == 1 and (
+            len(tokens[0]) < 3 or tokens[0] in ENGLISH_KEYWORD_STOPWORDS
+        ):
+            return False
+        return any(
+            len(token) >= 3
+            and token not in ENGLISH_KEYWORD_STOPWORDS
+            and not token.isdigit()
+            for token in tokens
+        )
+
+    return len(candidate) >= 2
+
+
+def _dedupe_and_filter_keywords(items: list[str], *, limit: int) -> list[str]:
+    """Keep stable keyword order while removing duplicates and filler words."""
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        keyword = item.strip(" \t\r\n,.;:!?，。；：！？、()（）[]【】{}“”\"'")
+        if not _is_meaningful_keyword(keyword):
+            continue
+
+        dedupe_key = keyword.lower() if keyword.isascii() else keyword
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        keywords.append(keyword)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _normalize_keywords(
+    value: object,
+    *,
+    fallback_text: str | None = None,
+    limit: int = 10,
+) -> list[str]:
+    """Normalize knowledge keywords and fall back to deterministic extraction."""
+    keywords = _dedupe_and_filter_keywords(_normalize_string_list(value), limit=limit)
+    if keywords or not fallback_text:
+        return keywords
+
+    fallback = _dedupe_and_filter_keywords(
+        _extract_mock_keywords(fallback_text),
+        limit=limit,
+    )
+    return fallback or ["知识点", "复习重点", "核心概念"][:limit]
+
+
+def _limit_string_list(
+    value: object,
+    *,
+    fallback: list[str],
+    min_items: int,
+    max_items: int,
+) -> list[str]:
+    """Normalize a list field and top it up with fallback items when needed."""
+    items = _normalize_string_list(value)
+    for item in fallback:
+        if len(items) >= min_items:
+            break
+        if item not in items:
+            items.append(item)
+    return items[:max_items]
+
+
+def _generate_knowledge_with_real_ai(
+    parsed_text: str,
+    *,
+    target_name: str | None = None,
+) -> dict[str, str | list[str]]:
+    """Ask the configured real LLM for structured knowledge extraction."""
+    if not parsed_text:
+        return {
+            "summary": "当前资料暂无可用于知识提炼的文本内容。",
+            "outline": ["等待资料解析结果", "补充可分析文本", "重新生成知识提炼"],
+            "keywords": ["知识点", "复习重点", "核心概念"],
+            "key_points": ["结合资料内容整理核心概念之间的关系。"],
+            "exam_points": ["等待资料解析完成后再整理可能考点。"],
+        }
+
+    source_text = parsed_text[:KNOWLEDGE_INPUT_MAX_CHARS]
+    system_prompt = (
+        "你是一个严谨的中文备考知识提炼助手。请根据学生上传资料提炼可复习内容。"
+        "必须返回严格 JSON 对象，不要返回 Markdown、代码块、解释文字或多余字段。"
+        "关键词必须是资料中的概念、术语、方法、流程、模型、理论、技术名词或重要实体；"
+        "禁止把功能词、连接词、代词、泛泛词作为关键词，例如 and、or、whether、the、this、that。"
+    )
+    user_prompt = (
+        "资料名称或学习目标：\n"
+        f"{target_name or '未提供'}\n\n"
+        "资料文本：\n"
+        f"{source_text}\n\n"
+        "请返回 JSON 对象，字段必须包括：\n"
+        "- summary: 字符串，120 到 220 字，总结资料主要内容。\n"
+        "- outline: 字符串数组，3 到 8 条，按复习逻辑组织资料大纲。\n"
+        "- keywords: 字符串数组，3 到 10 个，只包含高价值知识关键词。\n"
+        "- key_points: 字符串数组，3 到 8 条，列出必须掌握的知识重点。\n"
+        "- exam_points: 字符串数组，2 到 6 条，列出可能考查方式或考点。\n"
+        "返回示例："
+        "{\"summary\":\"...\",\"outline\":[\"...\"],\"keywords\":[\"...\"],"
+        "\"key_points\":[\"...\"],\"exam_points\":[\"...\"]}"
+    )
+    content = llm_service.chat_completion(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        task="knowledge_extraction",
+    )
+    data = _extract_json_object(content)
+
+    summary = str(data.get("summary", "")).strip()
+    if not summary:
+        summary = "AI 已完成知识提炼，但未返回摘要。"
+
+    keywords = _normalize_keywords(
+        data.get("keywords", []),
+        fallback_text=parsed_text,
+        limit=10,
+    )
+    outline = _limit_string_list(
+        data.get("outline", []),
+        fallback=["资料核心内容梳理", "重要概念与定义", "复习重点与可能考点"],
+        min_items=3,
+        max_items=8,
+    )
+    key_points = _limit_string_list(
+        data.get("key_points", []),
+        fallback=[
+            f"理解「{keyword}」相关概念和使用场景。"
+            for keyword in keywords[:3]
+        ]
+        or ["结合资料内容整理核心概念之间的关系。"],
+        min_items=3,
+        max_items=8,
+    )
+    exam_points = _limit_string_list(
+        data.get("exam_points", []),
+        fallback=[
+            f"关注「{keyword}」在题目中的定义、判断或应用。"
+            for keyword in keywords[:2]
+        ]
+        or ["结合资料内容判断可能的定义题、应用题和分析题。"],
+        min_items=2,
+        max_items=6,
+    )
+
+    return {
+        "summary": summary,
+        "outline": outline,
+        "keywords": keywords,
+        "key_points": key_points,
+        "exam_points": exam_points,
+    }
 
 
 def _fallback_question_hints(
