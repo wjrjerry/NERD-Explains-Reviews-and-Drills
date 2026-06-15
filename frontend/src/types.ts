@@ -51,13 +51,16 @@ export interface MaterialPreview {
 }
 
 export interface KnowledgeResult {
-  material_id?: number;
-  target_id?: number;
+  extraction_id?: number;
+  scope?: "material" | "target";
+  material_id?: number | null;
+  target_id?: number | null;
   summary: string;
   outline: string[];
   keywords: string[];
   key_points: string[];
   exam_points: string[];
+  knowledge_graph?: KnowledgeGraph | null;
 }
 
 export interface KnowledgePointReference {

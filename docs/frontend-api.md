@@ -293,7 +293,22 @@ GET /materials/{material_id}/preview
 
 当前预览接口主要返回 TXT 文本预览。PDF/图片已支持后台解析/OCR，但预览接口仍可能返回提示信息。
 
-### 5.6 资料结构化内容
+### 5.6 源文件预览
+
+```http
+GET /materials/{material_id}/file
+```
+
+该接口返回用户上传的源文件流，支持 PDF、TXT 和图片。接口需要登录认证，会校验资料归属。
+
+前端注意：
+
+- 该接口不是统一 `{code, message, data}` JSON 响应，成功时直接返回文件。
+- 因为浏览器的 `iframe/img` 不能直接附带 `Authorization` 头，前端应先用 `fetch` 携带 token 获取 `Blob`，再用 `URL.createObjectURL(blob)` 生成本地预览地址。
+- PDF 可用 `iframe` 预览，图片可用 `img` 预览，TXT/其他文本也可用 `iframe` 或继续使用 `/preview` 的 `preview_text`。
+- 切换资料或离开页面时应调用 `URL.revokeObjectURL(url)` 释放本地预览地址。
+
+### 5.7 资料结构化内容
 
 解析成功后，后端会从 `parsed_text` 进一步生成章节和文本块。
 

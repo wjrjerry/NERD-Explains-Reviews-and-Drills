@@ -35,7 +35,9 @@ type Pagination<T> = {
 
 type KnowledgeExtractScope =
   | { materialId: number; targetId?: never; forceRegenerate?: never }
-  | { targetId: number; materialId?: never; forceRegenerate?: boolean };
+  | { targetId: number; materialId?: never; forceRegenerate?: boolean }
+  | { material_id: number; target_id?: never; force_regenerate?: never }
+  | { target_id: number; material_id?: never; force_regenerate?: boolean };
 
 type QaScope = {
   materialId?: number;
@@ -110,6 +112,22 @@ async function download(path: string, filename: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+async function requestBlob(path: string) {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(buildUrl(path), { headers });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(readErrorMessage(payload));
+  }
+
+  return response.blob();
 }
 
 function normalizeApiBase(value: unknown) {
@@ -205,6 +223,7 @@ export const api = {
   parseMaterial: (materialId: number) =>
     request<{ material: Material }>(`/materials/${materialId}/parse`, { method: "POST" }),
   getMaterialPreview: (materialId: number) => request<MaterialPreview>(`/materials/${materialId}/preview`),
+  getMaterialFile: (materialId: number) => requestBlob(`/materials/${materialId}/file`),
   getMaterialStructured: (materialId: number) => request<MaterialStructured>(`/materials/${materialId}/structured`),
   deleteMaterial: (materialId: number) => request<Record<string, never>>(`/materials/${materialId}`, { method: "DELETE" }),
 
@@ -217,7 +236,9 @@ export const api = {
       body: JSON.stringify(
         "targetId" in scope
           ? { target_id: scope.targetId, force_regenerate: scope.forceRegenerate ?? true }
-          : { material_id: scope.materialId }
+          : "materialId" in scope
+            ? { material_id: scope.materialId }
+            : scope
       )
     }),
   getKnowledgeGraph: (targetId: number) => request<KnowledgeGraph>(`/knowledge-graphs/${targetId}`),
