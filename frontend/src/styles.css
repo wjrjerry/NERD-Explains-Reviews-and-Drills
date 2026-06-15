@@ -610,13 +610,18 @@ p {
 
 .preview-box,
 .muted-text,
-.danger-text {
+.danger-text,
+.warning-text {
   color: #566173;
   line-height: 1.7;
 }
 
 .danger-text {
   color: #b42318;
+}
+
+.warning-text {
+  color: #8a5a00;
 }
 
 .detail-stack {
@@ -678,7 +683,7 @@ blockquote {
 
 .practice-toolbar {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(280px, 1.3fr) minmax(250px, auto);
+  grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.25fr) minmax(250px, 1fr) minmax(230px, auto);
   align-items: center;
   gap: 12px;
 }
@@ -701,6 +706,10 @@ blockquote {
   grid-template-columns: minmax(130px, 1fr) 100px;
 }
 
+.practice-scope {
+  grid-template-columns: minmax(140px, 1fr) 96px;
+}
+
 .checkbox-row {
   display: inline-flex;
   align-items: center;
@@ -715,6 +724,20 @@ blockquote {
 
 .checkbox-row input {
   width: auto;
+}
+
+.focused-points,
+.knowledge-summary-grid,
+.usage-grid,
+.artifact-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.focused-points {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+  align-items: center;
 }
 
 .score-pill {
@@ -800,6 +823,28 @@ blockquote {
   margin: 14px 0 0;
 }
 
+.knowledge-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 14px;
+}
+
+.summary-chip,
+.usage-card {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(35, 47, 72, 0.08);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.summary-chip span,
+.usage-card span,
+.usage-card small {
+  color: #6d7788;
+  font-size: 13px;
+}
+
 .task-row {
   display: flex;
   gap: 11px;
@@ -876,6 +921,15 @@ blockquote {
   padding: 12px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.58);
+}
+
+.usage-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin-top: 14px;
+}
+
+.usage-table div {
+  grid-template-columns: minmax(120px, 1fr) 90px 130px minmax(180px, 1.4fr);
 }
 
 .spin {
@@ -1007,6 +1061,11 @@ blockquote {
 .chunk-card p {
   margin: 8px 0 0;
   line-height: 1.68;
+}
+
+.artifact-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-top: 14px;
 }
 
 .graph-layout {
@@ -1176,6 +1235,7 @@ blockquote {
   }
 
   .practice-toolbar .panel-title,
+  .focused-points,
   .score-pill {
     grid-column: 1 / -1;
   }
@@ -1224,6 +1284,10 @@ blockquote {
   }
 
   .admin-table div {
+    grid-template-columns: 1fr;
+  }
+
+  .practice-toolbar {
     grid-template-columns: 1fr;
   }
 }
