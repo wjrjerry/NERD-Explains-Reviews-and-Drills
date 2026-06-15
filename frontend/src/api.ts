@@ -171,10 +171,10 @@ export const api = {
   getMaterialStructured: (materialId: number) => request<MaterialStructured>(`/materials/${materialId}/structured`),
   deleteMaterial: (materialId: number) => request<Record<string, never>>(`/materials/${materialId}`, { method: "DELETE" }),
 
-  extractKnowledge: (materialId: number) =>
+  extractKnowledge: (payload: { material_id: number } | { target_id: number; force_regenerate?: boolean }) =>
     request<KnowledgeResult>("/knowledge/extract", {
       method: "POST",
-      body: JSON.stringify({ material_id: materialId })
+      body: JSON.stringify(payload)
     }),
   getKnowledgeGraph: (targetId: number) => request<KnowledgeGraph>(`/knowledge-graphs/${targetId}`),
   generateKnowledgeGraph: (targetId: number, maxPoints = 20) =>

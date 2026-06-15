@@ -247,6 +247,10 @@ p {
   color: #0f7a3d;
 }
 
+.toast.warning {
+  color: #936200;
+}
+
 .toast.danger {
   color: #b42318;
 }
@@ -610,13 +614,57 @@ p {
 
 .preview-box,
 .muted-text,
-.danger-text {
+.danger-text,
+.warning-text {
   color: #566173;
   line-height: 1.7;
 }
 
 .danger-text {
   color: #b42318;
+}
+
+.warning-text {
+  color: #936200;
+}
+
+.flow-status {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 10px;
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #566173;
+  background: rgba(120, 120, 128, 0.12);
+}
+
+.flow-status.parsing {
+  color: #0757a6;
+  background: rgba(0, 122, 255, 0.12);
+}
+
+.flow-status.parsed {
+  color: #0f7a3d;
+  background: rgba(52, 199, 89, 0.14);
+}
+
+.flow-status.failed {
+  color: #b42318;
+  background: rgba(255, 59, 48, 0.12);
+}
+
+.subtle-pill {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #1f3658;
+  background: rgba(0, 122, 255, 0.10);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .detail-stack {

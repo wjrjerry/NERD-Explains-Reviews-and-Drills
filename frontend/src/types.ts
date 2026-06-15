@@ -39,6 +39,7 @@ export interface Material {
   file_size: number;
   parse_status: ParseStatus;
   parse_error?: string | null;
+  parse_warning?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -50,12 +51,16 @@ export interface MaterialPreview {
 }
 
 export interface KnowledgeResult {
-  material_id: number;
+  extraction_id?: number;
+  scope?: "material" | "target";
+  material_id?: number | null;
+  target_id?: number | null;
   summary: string;
   outline: string[];
   keywords: string[];
   key_points: string[];
   exam_points: string[];
+  knowledge_graph?: KnowledgeGraph | null;
 }
 
 export interface KnowledgeGraphNode {
