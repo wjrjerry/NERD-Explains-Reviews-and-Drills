@@ -76,8 +76,7 @@ def test_question_generation_self_test_wrong_questions_and_review_plan_flow() ->
                 }
             )
         else:
-            wrong_answer = "A" if question["correct_answer"] != ["A"] else "B"
-            answers.append({"question_id": question["id"], "answer": [wrong_answer]})
+            answers.append({"question_id": question["id"], "answer": []})
 
     status, body = json_request(
         "POST",

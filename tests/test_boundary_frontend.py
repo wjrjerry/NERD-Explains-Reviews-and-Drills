@@ -1146,6 +1146,35 @@ class TestFullFlowBoundaryCase:
 
         single_choice_q = [q for q in questions if q["type"] == "single_choice"][0]
         subjective_q = [q for q in questions if q["type"] == "subjective"][0]
+        assert "correct_answer" not in single_choice_q
+        assert "analysis" not in single_choice_q
+        assert all("analysis" not in option for option in single_choice_q["options"])
+        assert single_choice_q["hint_count"] == 3
+
+        resp = await client.get(
+            f"/questions/{single_choice_q['id']}/hints/1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["level"] == 1
+        assert resp.json()["data"]["hint"]
+
+        resp = await client.get(
+            f"/questions/{single_choice_q['id']}/solution",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        solution = resp.json()["data"]
+        assert solution["correct_answer"]
+        assert solution["analysis"]
+        assert all("analysis" in option for option in solution["options"])
+
+        other_token, _ = await _register_and_login(client)
+        resp = await client.get(
+            f"/questions/{single_choice_q['id']}/solution",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        assert resp.status_code == 404
 
         # 8. 提交自测
         resp = await client.post(

@@ -46,22 +46,38 @@ class QuestionGenerateRequest(BaseModel):
 class QuestionOption(BaseModel):
     key: str
     text: str
-    analysis: str = Field(
-        default="",
-        description="Explanation for why this option is correct or incorrect.",
-    )
 
 
 class QuestionItem(BaseModel):
+    """Question shape exposed before the student submits an answer."""
+
     id: int
     type: QuestionType
     stem: str
     options: list[QuestionOption]
-    correct_answer: list[str]
-    analysis: str
     knowledge_points: list[str]
     knowledge_point_ids: list[int] = Field(default_factory=list)
     difficulty: QuestionDifficulty
+    hint_count: int = Field(default=0, ge=0)
+
+
+class QuestionHintResponse(BaseModel):
+    question_id: int
+    level: int = Field(ge=1)
+    hint: str
+
+
+class QuestionSolutionOption(BaseModel):
+    key: str
+    text: str
+    analysis: str
+
+
+class QuestionSolutionResponse(BaseModel):
+    question_id: int
+    correct_answer: list[str]
+    analysis: str
+    options: list[QuestionSolutionOption]
 
 
 class QuestionGenerateResponse(BaseModel):

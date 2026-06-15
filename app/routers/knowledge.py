@@ -1,6 +1,6 @@
 """Routes for the unified AI knowledge extraction module."""
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,12 +8,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
-from app.schemas.knowledge import KnowledgeExtractRequest, KnowledgeExtractResponse
+from app.schemas.knowledge import (
+    KnowledgeExtractRequest,
+    KnowledgeExtractionScope,
+    KnowledgeExtractResponse,
+)
 from app.schemas.response import ApiResponse
 from app.services import knowledge_service
 from app.utils.responses import fail, success
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+
+@router.get("/latest", response_model=ApiResponse[KnowledgeExtractResponse])
+async def get_latest_knowledge(
+    scope: KnowledgeExtractionScope = Query(..., description="提炼范围：material 或 target"),
+    target_id: int | None = Query(default=None, description="目标级提炼所属目标 ID"),
+    material_id: int | None = Query(default=None, description="资料级提炼所属资料 ID"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read the newest stored extraction without starting a new AI call."""
+    try:
+        result = await knowledge_service.get_latest_knowledge(
+            db,
+            current_user=current_user,
+            scope=scope,
+            target_id=target_id,
+            material_id=material_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return success(result)
 
 
 @router.post("/extract", response_model=ApiResponse[KnowledgeExtractResponse])

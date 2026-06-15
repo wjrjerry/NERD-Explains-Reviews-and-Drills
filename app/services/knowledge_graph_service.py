@@ -1,5 +1,7 @@
 """Business service for target-level knowledge graph generation and querying."""
 
+import re
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_point import MasteryStatus
@@ -42,6 +44,7 @@ def _normalize_graph_points(
     *,
     valid_material_ids: set[int],
     max_points: int,
+    existing_point_names: set[str] | None = None,
 ) -> list[KnowledgePointCreateData]:
     """Validate and normalize AI graph nodes before mutating the database."""
     normalized: list[KnowledgePointCreateData] = []
@@ -54,7 +57,11 @@ def _normalize_graph_points(
         seen_names.add(name)
 
         parent_name = str(raw.get("parent_name", "") or "").strip() or None
-        if parent_name and parent_name not in seen_names:
+        if (
+            parent_name
+            and parent_name not in seen_names
+            and parent_name not in (existing_point_names or set())
+        ):
             parent_name = None
 
         evidence_items: list[dict[str, object]] = []
@@ -108,6 +115,103 @@ def _materials_for_ai(materials: list[Material]) -> list[dict[str, object]]:
     ]
 
 
+def _existing_points_for_ai(points) -> list[dict[str, object]]:
+    """Build compact existing graph context so AI updates instead of replacing."""
+    by_id = {point.id: point for point in points}
+    payload: list[dict[str, object]] = []
+    for point in points:
+        parent = by_id.get(point.parent_id) if point.parent_id else None
+        payload.append(
+            {
+                "name": point.name,
+                "description": point.description,
+                "importance_weight": point.importance_weight,
+                "parent_name": parent.name if parent is not None else None,
+                "level": point.level,
+                "sort_order": point.sort_order,
+            }
+        )
+    return payload
+
+
+def _point_match_terms(point: KnowledgePointCreateData) -> list[str]:
+    """Extract conservative terms for linking a point to all parsed materials."""
+    candidates = [point.name]
+    candidates.extend(
+        part.strip()
+        for part in re.split(r"[\s,，。:：;；/\\()（）\[\]【】]+", point.name)
+    )
+    if point.description:
+        candidates.extend(
+            part.strip()
+            for part in re.split(r"[\s,，。:：;；/\\()（）\[\]【】]+", point.description)
+        )
+
+    terms: list[str] = []
+    for candidate in candidates:
+        if len(candidate) < 2:
+            continue
+        if candidate not in terms:
+            terms.append(candidate)
+    return sorted(terms, key=len, reverse=True)[:12]
+
+
+def _matching_material_snippet(text: str, terms: list[str]) -> str | None:
+    """Return a compact source snippet when a point term occurs in a material."""
+    compact = text.strip()
+    lowered = compact.casefold()
+    for term in terms:
+        index = lowered.find(term.casefold())
+        if index < 0:
+            continue
+        start = max(0, index - 120)
+        end = min(len(compact), index + len(term) + 220)
+        return compact[start:end].strip()[:500]
+    return None
+
+
+def _enrich_material_evidence(
+    points: list[KnowledgePointCreateData],
+    materials: list[Material],
+) -> list[KnowledgePointCreateData]:
+    """Link generated points against every parsed material, not only new files."""
+    enriched: list[KnowledgePointCreateData] = []
+    for point in points:
+        evidence_by_material: dict[int, dict[str, object]] = {}
+        for evidence in point.evidence:
+            try:
+                material_id = int(evidence.get("material_id"))
+            except (TypeError, ValueError):
+                continue
+            evidence_by_material[material_id] = evidence
+
+        terms = _point_match_terms(point)
+        for material in materials:
+            if material.id in evidence_by_material:
+                continue
+            snippet = _matching_material_snippet(material.parsed_text or "", terms)
+            if snippet is None:
+                continue
+            evidence_by_material[material.id] = {
+                "material_id": material.id,
+                "snippet": snippet,
+                "relevance_score": 0.75,
+            }
+
+        enriched.append(
+            KnowledgePointCreateData(
+                name=point.name,
+                description=point.description,
+                importance_weight=point.importance_weight,
+                parent_name=point.parent_name,
+                level=point.level,
+                sort_order=point.sort_order,
+                evidence=list(evidence_by_material.values()),
+            )
+        )
+    return enriched
+
+
 class KnowledgeGraphService:
     """Service for generating and querying target-level knowledge graphs."""
 
@@ -153,6 +257,7 @@ class KnowledgeGraphService:
                 target_title=target.title,
                 subject=target.subject,
                 materials=_materials_for_ai(materials),
+                existing_points=_existing_points_for_ai(existing),
                 max_points=payload.max_points,
             )
         finally:
@@ -170,8 +275,10 @@ class KnowledgeGraphService:
             raw_points,
             valid_material_ids={material.id for material in materials},
             max_points=payload.max_points,
+            existing_point_names={point.name for point in existing},
         )
-        await KnowledgeGraphRepository.replace_graph_for_target(
+        normalized_points = _enrich_material_evidence(normalized_points, materials)
+        await KnowledgeGraphRepository.sync_graph_for_target(
             db,
             user_id=current_user.id,
             target_id=payload.target_id,

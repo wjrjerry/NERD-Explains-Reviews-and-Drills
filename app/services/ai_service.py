@@ -281,6 +281,40 @@ def _normalize_string_list(value: object) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _fallback_question_hints(
+    *,
+    stem: str,
+    knowledge_points: list[str],
+) -> list[str]:
+    """Build non-answer-revealing hints when the model omits them."""
+    focus = "、".join(knowledge_points[:2]) if knowledge_points else "题干中的核心概念"
+    return [
+        f"先回到「{focus}」的定义或适用场景，确认题目考查的概念边界。",
+        "再比较题干关键词与各选项/作答要点之间的关系，排除与资料依据不一致的表述。",
+        f"最后用资料中的原句或例子验证你的判断，但不要只凭直觉作答：{stem[:40]}",
+    ]
+
+
+def _normalize_question_hints(
+    value: object,
+    *,
+    stem: str,
+    knowledge_points: list[str],
+) -> list[str]:
+    """Normalize three progressive hints without exposing full answers."""
+    hints = _normalize_string_list(value)
+    if len(hints) < 3:
+        hints.extend(
+            hint
+            for hint in _fallback_question_hints(
+                stem=stem,
+                knowledge_points=knowledge_points,
+            )
+            if hint not in hints
+        )
+    return hints[:3]
+
+
 def _normalize_generated_question(
     raw: object,
     *,
@@ -332,6 +366,9 @@ def _normalize_generated_question(
     knowledge_points = raw.get("knowledge_points", [])
     if not isinstance(knowledge_points, list):
         knowledge_points = []
+    normalized_points = [
+        str(point).strip() for point in knowledge_points if str(point).strip()
+    ]
 
     stem = str(raw.get("stem", "")).strip()
     analysis = str(raw.get("analysis", "")).strip()
@@ -345,9 +382,12 @@ def _normalize_generated_question(
         "options": normalized_options,
         "correct_answer": [str(answer).strip() for answer in correct_answer],
         "analysis": analysis,
-        "knowledge_points": [
-            str(point).strip() for point in knowledge_points if str(point).strip()
-        ],
+        "hints": _normalize_question_hints(
+            raw.get("hints", []),
+            stem=stem,
+            knowledge_points=normalized_points,
+        ),
+        "knowledge_points": normalized_points,
         "difficulty": str(raw.get("difficulty") or difficulty),
     }
 
@@ -454,6 +494,10 @@ def _single_choice_question(
         ],
         "correct_answer": ["A"],
         "analysis": f"资料中围绕「{keyword}」展开了说明，因此 A 项正确。",
+        "hints": _fallback_question_hints(
+            stem=f"关于「{keyword}」的资料理解题",
+            knowledge_points=[keyword],
+        ),
         "knowledge_points": [keyword],
         "difficulty": difficulty,
     }
@@ -496,6 +540,10 @@ def _multiple_choice_question(
         ],
         "correct_answer": ["A", "B"],
         "analysis": f"资料中明确涉及「{first}」和「{second}」，因此 A、B 正确。",
+        "hints": _fallback_question_hints(
+            stem="根据资料内容判断重点理解内容",
+            knowledge_points=[first, second],
+        ),
         "knowledge_points": [first, second],
         "difficulty": difficulty,
     }
@@ -527,6 +575,10 @@ def _true_false_question(
         ],
         "correct_answer": ["T"],
         "analysis": "该判断题直接依据资料片段生成，因此应选择正确。",
+        "hints": _fallback_question_hints(
+            stem=statement,
+            knowledge_points=_extract_mock_keywords(statement)[:2],
+        ),
         "knowledge_points": _extract_mock_keywords(statement)[:2],
         "difficulty": difficulty,
     }
@@ -548,6 +600,10 @@ def _subjective_question(
         "options": [],
         "correct_answer": [reference],
         "analysis": f"回答应结合资料中关于「{keyword}」的描述，说明其含义和学习价值。",
+        "hints": _fallback_question_hints(
+            stem=f"说明「{keyword}」的核心含义和复习价值",
+            knowledge_points=[keyword],
+        ),
         "knowledge_points": [keyword],
         "difficulty": difficulty,
     }
@@ -652,7 +708,7 @@ def _generate_questions_with_real_ai(
         "你是一个软件工程备考出题助手。请只根据用户提供的资料出题。"
         "必须返回严格 JSON 数组，不要返回 Markdown、解释文字或代码块。"
         "每道题必须包含 type, stem, options, correct_answer, analysis, "
-        "knowledge_points, difficulty 字段。"
+        "hints, knowledge_points, difficulty 字段。"
         "选择/判断题的每个 options 元素必须包含 key, text, analysis 字段。"
         "主观题的 options 必须为空数组。"
     )
@@ -676,12 +732,15 @@ def _generate_questions_with_real_ai(
         "- 主观题 correct_answer 必须是参考答案或评分要点字符串数组。\n"
         "- 客观题每个选项的 analysis 必须说明该选项为什么正确或错误。\n"
         "- 题目级 analysis 需要综合说明正确答案依据。\n"
+        "- hints 必须是 3 个字符串，按“概念提示、思路提示、接近答案但不直接给出答案”的顺序生成。\n"
+        "- hints 不能直接出现正确选项 key、不能直接写出“答案是...”，也不要完整复述 correct_answer。\n"
         "- knowledge_points 是字符串数组，必须优先使用上方知识点名称。\n"
         "- 如果给定了优先覆盖的知识点，不要生成与这些知识点无关的题目。\n\n"
         "返回示例格式：\n"
         "[{\"type\":\"single_choice\",\"stem\":\"...\","
         "\"options\":[{\"key\":\"A\",\"text\":\"...\",\"analysis\":\"该项正确，因为...\"}],"
         "\"correct_answer\":[\"A\"],\"analysis\":\"...\",\"knowledge_points\":[\"...\"],"
+        "\"hints\":[\"先回忆概念边界。\",\"比较题干和选项关键词。\",\"回到资料中的对应描述验证判断。\"],"
         "\"difficulty\":\"medium\"}]"
     )
     content = llm_service.chat_completion(
@@ -906,7 +965,7 @@ def _normalize_graph_item(raw: object, *, index: int) -> dict[str, object]:
         "description": str(raw.get("description", "") or "").strip(),
         "importance_weight": min(max(importance_weight, 0.0), 1.0),
         "parent_name": str(raw.get("parent_name", "") or "").strip() or None,
-        "level": level,
+        "level": min(max(level, 1), 4),
         "sort_order": sort_order,
         "evidence": normalized_evidence,
     }
@@ -918,38 +977,68 @@ def generate_knowledge_graph(
     subject: str | None,
     materials: list[dict[str, object]],
     max_points: int,
+    existing_points: list[dict[str, object]] | None = None,
 ) -> dict[str, list[dict[str, object]]]:
-    """Generate a target-level knowledge graph from parsed materials."""
+    """Generate or update a target-level graph from parsed materials."""
     if settings.ai_provider != "mock":
         return _generate_knowledge_graph_with_real_ai(
             target_title=target_title,
             subject=subject,
             materials=materials,
+            existing_points=existing_points or [],
             max_points=max_points,
         )
 
     joined_text = _normalize_text(
         " ".join(str(material.get("parsed_text", "")) for material in materials)
     )
-    keywords = _extract_mock_keywords(joined_text)[:max_points]
+    existing_names = [
+        str(point.get("name", "")).strip()
+        for point in (existing_points or [])
+        if str(point.get("name", "")).strip()
+    ]
+    extracted_keywords = _extract_mock_keywords(joined_text)
+    keywords = extracted_keywords + [
+        name for name in existing_names if name not in extracted_keywords
+    ]
+    keywords = keywords[:max_points]
     if not keywords:
         keywords = [target_title or subject or "复习重点"]
 
     points: list[dict[str, object]] = []
     for index, keyword in enumerate(keywords):
-        material = materials[index % len(materials)]
+        material = next(
+            (
+                item
+                for item in materials
+                if keyword.casefold() in str(item.get("parsed_text", "")).casefold()
+            ),
+            materials[index % len(materials)],
+        )
         material_id = int(material["material_id"])
         snippet = _select_reference_snippet(
             str(material.get("parsed_text", "")),
             keyword,
         )
+        existing = next(
+            (
+                point
+                for point in (existing_points or [])
+                if str(point.get("name", "")).strip() == keyword
+            ),
+            {},
+        )
         points.append(
             {
                 "name": keyword,
-                "description": f"围绕「{keyword}」整理定义、应用场景和常见考法。",
-                "importance_weight": max(0.35, 1.0 - index * 0.08),
-                "parent_name": None,
-                "level": 1,
+                "description": existing.get("description")
+                or f"围绕「{keyword}」整理定义、应用场景和常见考法。",
+                "importance_weight": existing.get(
+                    "importance_weight",
+                    max(0.35, 1.0 - index * 0.08),
+                ),
+                "parent_name": existing.get("parent_name"),
+                "level": existing.get("level", 1),
                 "sort_order": index + 1,
                 "evidence": [
                     {
@@ -970,8 +1059,9 @@ def _generate_knowledge_graph_with_real_ai(
     subject: str | None,
     materials: list[dict[str, object]],
     max_points: int,
+    existing_points: list[dict[str, object]],
 ) -> dict[str, list[dict[str, object]]]:
-    """Ask the configured real LLM to build a target-level knowledge graph."""
+    """Ask the configured real LLM to update a target-level knowledge graph."""
     material_blocks = []
     for material in materials:
         material_blocks.append(
@@ -983,23 +1073,32 @@ def _generate_knowledge_graph_with_real_ai(
         )
 
     system_prompt = (
-        "你是一个备考知识图谱构建助手。请根据多份课程资料，抽取目标级知识点。"
+        "你是一个备考知识图谱维护助手。请根据已有图谱和多份课程资料，更新目标级知识点。"
         "必须返回严格 JSON 对象，不要返回 Markdown、解释文字或代码块。"
     )
     user_prompt = (
         "学习目标：\n"
         f"- 标题：{target_title}\n"
         f"- 科目：{subject or '未提供'}\n\n"
+        "已有知识图谱 JSON：\n"
+        f"{json.dumps(existing_points, ensure_ascii=False)}\n\n"
         "资料列表 JSON：\n"
         f"{json.dumps(material_blocks, ensure_ascii=False)}\n\n"
-        "请生成知识点图谱，最多 "
+        "请在已有知识图谱基础上更新，而不是从零重建。"
+        "已有知识点仍然成立时必须复用其原 name，不要仅因措辞不同创建重复节点；"
+        "可以根据新资料补充新知识点、更新描述、重要度、层级和资料证据。"
+        "请优先返回新资料引入的新知识点，以及资料证据或属性需要更新的已有知识点，"
+        "不需要机械重复所有没有变化的旧知识点。"
+        "对每个返回知识点都要重新检查资料列表中的每一份资料，"
+        "evidence 应列出所有实际相关的资料，而不只是最近上传的资料。"
+        "返回的 points 应包含需要新增或更新的知识点，最多 "
         f"{max_points} 个节点。返回 JSON 对象，字段为 points。"
         "points 是数组，每个元素包含：\n"
         "- name: 知识点名称。\n"
         "- description: 简短说明。\n"
-        "- importance_weight: 0 到 1 的重要程度。\n"
+        "- importance_weight: 0 到 1 的重要程度，综合考虑考试常见度、基础依赖关系、资料覆盖篇幅和对后续知识的支撑程度。\n"
         "- parent_name: 父知识点名称，没有则为 null。\n"
-        "- level: 层级，一级知识点为 1。\n"
+        "- level: 层级，一级核心知识为 1，子知识依次递增，最多 4 层。\n"
         "- sort_order: 排序，从 1 开始。\n"
         "- evidence: 数组，每个元素包含 material_id, snippet, relevance_score。\n"
         "evidence 的 material_id 必须来自资料列表，snippet 必须来自资料内容。"

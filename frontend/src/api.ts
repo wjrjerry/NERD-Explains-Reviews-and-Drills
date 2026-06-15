@@ -7,6 +7,7 @@ import type {
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgeMasteryStatus,
   KnowledgePointMastery,
   KnowledgePointMaterials,
   KnowledgeResult,
@@ -14,6 +15,8 @@ import type {
   MaterialPreview,
   MaterialStructured,
   QaRecord,
+  QuestionHint,
+  QuestionSolution,
   QuestionType,
   Question,
   ReviewPlan,
@@ -261,6 +264,12 @@ export const api = {
             : scope
       )
     }),
+  getLatestKnowledge: (scope: { materialId: number; targetId?: never } | { targetId: number; materialId?: never }) =>
+    request<KnowledgeResult>(
+      "targetId" in scope
+        ? `/knowledge/latest${buildQuery({ scope: "target", target_id: scope.targetId })}`
+        : `/knowledge/latest${buildQuery({ scope: "material", material_id: scope.materialId })}`
+    ),
   getKnowledgeGraph: (targetId: number) => request<KnowledgeGraph>(`/knowledge-graphs/${targetId}`),
   generateKnowledgeGraph: (targetId: number, maxPoints = 20) =>
     request<KnowledgeGraph>("/knowledge-graphs/generate", {
@@ -275,7 +284,7 @@ export const api = {
     request<Pagination<WrongQuestion>>(
       `/knowledge-points/${knowledgePointId}/wrong-questions${buildQuery({ page, page_size: pageSize })}`
     ),
-  updateKnowledgePointMastery: (knowledgePointId: number, masteryStatus: WrongQuestion["mastery_status"]) =>
+  updateKnowledgePointMastery: (knowledgePointId: number, masteryStatus: KnowledgeMasteryStatus) =>
     request<KnowledgePointMastery>(`/knowledge-points/${knowledgePointId}/mastery`, {
       method: "PATCH",
       body: JSON.stringify({ mastery_status: masteryStatus })
@@ -309,6 +318,10 @@ export const api = {
         count: scope.count
       })
     }),
+  getQuestionHint: (questionId: number, level: number) =>
+    request<QuestionHint>(`/questions/${questionId}/hints/${level}`),
+  getQuestionSolution: (questionId: number) =>
+    request<QuestionSolution>(`/questions/${questionId}/solution`),
 
   submitTest: (materialId: number, targetId: number | null, answers: TestSubmitAnswer[]) =>
     request<TestResult>("/tests/submit", {

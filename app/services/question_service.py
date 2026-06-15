@@ -12,8 +12,11 @@ from app.repositories.study_target_repository import StudyTargetRepository
 from app.schemas.question import (
     QuestionGenerateRequest,
     QuestionGenerateResponse,
+    QuestionHintResponse,
     QuestionItem,
     QuestionOption,
+    QuestionSolutionOption,
+    QuestionSolutionResponse,
 )
 from app.services import ai_service, ai_usage_service
 
@@ -32,15 +35,13 @@ def _build_question_item_from_record(
             QuestionOption(
                 key=str(option["key"]),
                 text=str(option["text"]),
-                analysis=str(option.get("analysis", "")),
             )
             for option in question.options
         ],
-        correct_answer=[str(answer) for answer in question.correct_answer],
-        analysis=question.analysis,
         knowledge_points=[str(point) for point in question.knowledge_points],
         knowledge_point_ids=point_ids or [],
         difficulty=question.difficulty.value,
+        hint_count=len(question.hints or []),
     )
 
 
@@ -266,5 +267,62 @@ async def generate_questions(
                 point_ids=link_map.get(question.id, []),
             )
             for question in saved_questions
+        ],
+    )
+
+
+async def get_question_hint(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    question_id: int,
+    level: int,
+) -> QuestionHintResponse:
+    """Return one progressively stronger hint without exposing the answer."""
+    question = await QuestionRepository.get_question_by_id(
+        db,
+        user_id=user_id,
+        question_id=question_id,
+    )
+    if question is None:
+        raise LookupError("Question not found.")
+
+    hints = [str(hint).strip() for hint in (question.hints or []) if str(hint).strip()]
+    if level < 1 or level > len(hints):
+        raise LookupError("Hint not available.")
+
+    return QuestionHintResponse(
+        question_id=question.id,
+        level=level,
+        hint=hints[level - 1],
+    )
+
+
+async def get_question_solution(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    question_id: int,
+) -> QuestionSolutionResponse:
+    """Return the stored answer and analysis for a question owned by the user."""
+    question = await QuestionRepository.get_question_by_id(
+        db,
+        user_id=user_id,
+        question_id=question_id,
+    )
+    if question is None:
+        raise LookupError("Question not found.")
+
+    return QuestionSolutionResponse(
+        question_id=question.id,
+        correct_answer=[str(answer) for answer in question.correct_answer],
+        analysis=question.analysis,
+        options=[
+            QuestionSolutionOption(
+                key=str(option.get("key", "")),
+                text=str(option.get("text", "")),
+                analysis=str(option.get("analysis", "")),
+            )
+            for option in question.options
         ],
     )

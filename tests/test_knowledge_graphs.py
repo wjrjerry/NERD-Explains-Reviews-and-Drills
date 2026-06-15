@@ -1,6 +1,13 @@
 """Tests for target-level knowledge graph generation helpers."""
 
+from types import SimpleNamespace
+
+from app.repositories.knowledge_graph_repository import KnowledgePointCreateData
 from app.schemas.knowledge_graph import KnowledgeGraphGenerateRequest, KnowledgePointNode
+from app.services.knowledge_graph_service import (
+    _enrich_material_evidence,
+    _normalize_graph_points,
+)
 from app.services import ai_service
 
 
@@ -37,6 +44,58 @@ def test_knowledge_graph_generate_request_limits_point_count():
     assert payload.target_id == 1
     assert payload.force_regenerate is False
     assert payload.max_points == 3
+
+
+def test_enrich_material_evidence_links_new_point_to_existing_materials():
+    points = [
+        KnowledgePointCreateData(
+            name="需求分析",
+            description="明确系统边界和验收标准",
+            importance_weight=0.9,
+            parent_name=None,
+            level=1,
+            sort_order=1,
+            evidence=[
+                {
+                    "material_id": 2,
+                    "snippet": "新资料也提到了需求分析。",
+                    "relevance_score": 1.0,
+                }
+            ],
+        )
+    ]
+    materials = [
+        SimpleNamespace(id=1, parsed_text="旧资料：需求分析用于明确系统边界。"),
+        SimpleNamespace(id=2, parsed_text="新资料也提到了需求分析。"),
+    ]
+
+    enriched = _enrich_material_evidence(points, materials)
+
+    evidence_material_ids = {
+        int(item["material_id"]) for item in enriched[0].evidence
+    }
+    assert evidence_material_ids == {1, 2}
+
+
+def test_normalize_graph_points_allows_parent_from_existing_graph():
+    points = _normalize_graph_points(
+        [
+            {
+                "name": "用例建模",
+                "description": "根据需求分析扩展出的子知识点",
+                "importance_weight": 0.7,
+                "parent_name": "需求分析",
+                "level": 2,
+                "sort_order": 1,
+                "evidence": [{"material_id": 1, "snippet": "用例建模", "relevance_score": 0.8}],
+            }
+        ],
+        valid_material_ids={1},
+        max_points=5,
+        existing_point_names={"需求分析"},
+    )
+
+    assert points[0].parent_name == "需求分析"
 
 
 def test_knowledge_point_node_schema_contains_mastery_fields():
