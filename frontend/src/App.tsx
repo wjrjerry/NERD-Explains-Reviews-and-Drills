@@ -78,7 +78,6 @@ const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard 
   { view: "dashboard", label: "仪表盘", icon: LayoutDashboard },
   { view: "targets", label: "目标管理", icon: BookOpen },
   { view: "materials", label: "资料库", icon: FileText },
-  { view: "detail", label: "资料详情", icon: Brain },
   { view: "graph", label: "知识图谱", icon: Network },
   { view: "qa", label: "AI 问答", icon: MessageSquare },
   { view: "practice", label: "AI 出题", icon: ClipboardCheck },
@@ -706,8 +705,9 @@ function App() {
         <nav>
           {navItems.map((item) => {
             const Icon = item.icon;
+            const isActive = view === item.view || (view === "detail" && item.view === "materials");
             return (
-              <button key={item.view} className={view === item.view ? "active" : ""} onClick={() => setView(item.view)}>
+              <button key={item.view} className={isActive ? "active" : ""} onClick={() => setView(item.view)}>
                 <Icon size={18} />
                 <span>{item.label}</span>
               </button>
@@ -806,6 +806,7 @@ function App() {
             }}
             onJumpToQa={() => setView("qa")}
             onJumpToPractice={() => setView("practice")}
+            onBack={() => setView("materials")}
           />
         ) : null}
 
@@ -1201,7 +1202,8 @@ function MaterialDetailPage({
   onGenerateGraph,
   onExportKnowledge,
   onJumpToQa,
-  onJumpToPractice
+  onJumpToPractice,
+  onBack
 }: {
   material: Material | null;
   target: StudyTarget | null;
@@ -1215,6 +1217,7 @@ function MaterialDetailPage({
   onExportKnowledge: () => void;
   onJumpToQa: () => void;
   onJumpToPractice: () => void;
+  onBack: () => void;
 }) {
   if (!material) return <EmptyPanel text="请先在资料库中选择一份资料。" />;
 
@@ -1223,6 +1226,17 @@ function MaterialDetailPage({
   return (
     <div className="grid learn-grid">
       <section className="panel wide">
+        <div className="subpage-header">
+          <button className="ghost-button compact-button" onClick={onBack}>
+            <FileText size={16} />
+            返回资料库
+          </button>
+          <div>
+            <span>资料库 / 资料详情</span>
+            <strong>{material.original_filename}</strong>
+          </div>
+          <StatusBadge status={material.parse_status} />
+        </div>
         <PanelTitle icon={Brain} title="资料详情与 AI 学习" />
         <div className="detail-header">
           <div>
@@ -1860,7 +1874,7 @@ function pageTitle(view: View) {
     dashboard: "学生首页 / 仪表盘",
     targets: "课程/考试目标管理",
     materials: "资料库管理",
-    detail: "资料详情与 AI 学习",
+    detail: "资料库 / 资料详情",
     graph: "知识图谱与掌握度",
     qa: "AI 问答页",
     practice: "AI 出题练习页",

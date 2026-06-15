@@ -600,6 +600,33 @@ p {
   gap: 16px;
 }
 
+.subpage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(35, 47, 72, 0.08);
+  padding-bottom: 14px;
+}
+
+.subpage-header div {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+}
+
+.subpage-header span {
+  color: #6d7788;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.subpage-header strong {
+  color: #1f3658;
+  font-size: 20px;
+}
+
 .detail-header h2 {
   font-size: 30px;
 }
