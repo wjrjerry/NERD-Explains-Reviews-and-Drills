@@ -61,6 +61,53 @@ textarea:focus {
   background: #ffffff;
 }
 
+.date-picker-field {
+  position: relative;
+  width: 100%;
+}
+
+.date-picker-native {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.date-picker-display {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(35, 47, 72, 0.12);
+  border-radius: 14px;
+  padding: 13px 14px;
+  color: #6d7788;
+  background: rgba(255, 255, 255, 0.76);
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.date-picker-display.has-value {
+  color: #172033;
+}
+
+.date-picker-display svg {
+  flex: 0 0 auto;
+  color: #172033;
+}
+
+.date-picker-display:hover,
+.date-picker-display:focus-visible {
+  border-color: rgba(0, 122, 255, 0.55);
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.10);
+  background: #ffffff;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 260px 1fr;

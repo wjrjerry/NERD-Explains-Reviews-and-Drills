@@ -2366,7 +2366,7 @@ function TargetsPage({
           <option value="exam">exam</option>
           <option value="course">course</option>
         </select>
-        <input name="exam_date" type="date" aria-label="考试日期" />
+        <DatePickerField name="exam_date" label="考试日期" placeholder="选择考试日期" />
         <textarea name="review_goal" placeholder="复习目标" required />
         <textarea name="description" placeholder="补充说明（可选）" />
         <button className="primary-button" type="submit"><Plus size={16} />创建目标</button>
@@ -4086,8 +4086,8 @@ function ReviewPlansPage({
         <select name="target_id" defaultValue={targets[0]?.id}>
           {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
         </select>
-        <input name="start_date" type="date" required />
-        <input name="end_date" type="date" required />
+        <DatePickerField name="start_date" label="开始日期" required />
+        <DatePickerField name="end_date" label="结束日期" required />
         <button className="primary-button" type="submit" disabled={isGenerating}>
           {isGenerating ? <LoaderCircle className="spin-icon" size={16} /> : <CalendarDays size={16} />}
           {isGenerating ? "规划中" : "生成计划"}
@@ -4237,6 +4237,55 @@ function LoadingBanner() {
     <div className="toast">
       <LoaderCircle className="spin" size={16} />
       <span>正在同步接口数据...</span>
+    </div>
+  );
+}
+
+function DatePickerField({
+  name,
+  label,
+  required = false,
+  placeholder = "选择日期"
+}: {
+  name: string;
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [value, setValue] = useState("");
+
+  function openPicker() {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    try {
+      if (typeof input.showPicker === "function") {
+        input.showPicker();
+      } else {
+        input.click();
+      }
+    } catch {
+      input.click();
+    }
+  }
+
+  return (
+    <div className="date-picker-field">
+      <input
+        ref={inputRef}
+        className="date-picker-native"
+        name={name}
+        type="date"
+        required={required}
+        value={value}
+        onChange={(event) => setValue(event.currentTarget.value)}
+        aria-label={label}
+      />
+      <button className={`date-picker-display ${value ? "has-value" : ""}`} type="button" onClick={openPicker}>
+        <span>{value ? formatDateZh(value) : placeholder}</span>
+        <CalendarDays size={18} />
+      </button>
     </div>
   );
 }
