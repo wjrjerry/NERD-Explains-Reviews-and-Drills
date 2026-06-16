@@ -223,6 +223,11 @@ function App() {
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
   const [targetKnowledge, setTargetKnowledge] = useState<KnowledgeResult | null>(null);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [graphKnowledgeGraph, setGraphKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [graphTargetKnowledge, setGraphTargetKnowledge] = useState<KnowledgeResult | null>(null);
+  const [graphMaterialKnowledge, setGraphMaterialKnowledge] = useState<KnowledgeResult | null>(null);
+  const [qaKnowledgeGraph, setQaKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [practiceKnowledgeGraph, setPracticeKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
   const [activeKnowledgeJob, setActiveKnowledgeJob] = useState<KnowledgeJob | null>(null);
   const [graphMaterialKnowledgeLoading, setGraphMaterialKnowledgeLoading] = useState(false);
   const [graphMaterialKnowledgeError, setGraphMaterialKnowledgeError] = useState<string | null>(null);
@@ -242,6 +247,12 @@ function App() {
   const [adminLogs, setAdminLogs] = useState<AdminLog[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
+  const [graphContextTargetId, setGraphContextTargetId] = useState<number | null>(null);
+  const [graphContextMaterialId, setGraphContextMaterialId] = useState<number | null>(null);
+  const [qaContextTargetId, setQaContextTargetId] = useState<number | null>(null);
+  const [qaContextMaterialId, setQaContextMaterialId] = useState<number | null>(null);
+  const [practiceContextTargetId, setPracticeContextTargetId] = useState<number | null>(null);
+  const [practiceContextMaterialId, setPracticeContextMaterialId] = useState<number | null>(null);
   const [qaScope, setQaScope] = useState<FocusableScope>("target");
   const [practiceScope, setPracticeScope] = useState<FocusableScope>("target");
   const [qaFocusedKnowledgePointIds, setQaFocusedKnowledgePointIds] = useState<number[]>([]);
@@ -263,26 +274,69 @@ function App() {
     () => materials.find((item) => item.id === selectedMaterialId) ?? null,
     [materials, selectedMaterialId]
   );
-  const currentMaterialKnowledgePoints = useMemo(
+  const graphContextTargetIdEffective = graphContextTargetId;
+  const graphContextMaterialIdEffective = graphContextMaterialId;
+  const qaContextTargetIdEffective = qaContextTargetId;
+  const qaContextMaterialIdEffective = qaContextMaterialId;
+  const practiceContextTargetIdEffective = practiceContextTargetId;
+  const practiceContextMaterialIdEffective = practiceContextMaterialId;
+  const graphContextTarget = useMemo(
+    () => targets.find((item) => item.id === graphContextTargetIdEffective) ?? null,
+    [graphContextTargetIdEffective, targets]
+  );
+  const graphContextMaterial = useMemo(
+    () => materials.find((item) => item.id === graphContextMaterialIdEffective) ?? null,
+    [materials, graphContextMaterialIdEffective]
+  );
+  const qaContextTarget = useMemo(
+    () => targets.find((item) => item.id === qaContextTargetIdEffective) ?? null,
+    [qaContextTargetIdEffective, targets]
+  );
+  const qaContextMaterial = useMemo(
+    () => materials.find((item) => item.id === qaContextMaterialIdEffective) ?? null,
+    [materials, qaContextMaterialIdEffective]
+  );
+  const practiceContextTarget = useMemo(
+    () => targets.find((item) => item.id === practiceContextTargetIdEffective) ?? null,
+    [practiceContextTargetIdEffective, targets]
+  );
+  const practiceContextMaterial = useMemo(
+    () => materials.find((item) => item.id === practiceContextMaterialIdEffective) ?? null,
+    [materials, practiceContextMaterialIdEffective]
+  );
+  const qaMaterialKnowledgePoints = useMemo(
     () =>
-      selectedMaterialId
-        ? knowledgeGraph?.nodes.filter((node) =>
-            node.materials?.some((link) => link.material_id === selectedMaterialId)
+      qaContextMaterialIdEffective
+        ? qaKnowledgeGraph?.nodes.filter((node) =>
+            node.materials?.some((link) => link.material_id === qaContextMaterialIdEffective)
           ) ?? []
         : [],
-    [knowledgeGraph, selectedMaterialId]
+    [qaKnowledgeGraph, qaContextMaterialIdEffective]
   );
-  const currentMaterialKnowledgePointIds = useMemo(
-    () => new Set(currentMaterialKnowledgePoints.map((point) => point.id)),
-    [currentMaterialKnowledgePoints]
+  const practiceMaterialKnowledgePoints = useMemo(
+    () =>
+      practiceContextMaterialIdEffective
+        ? practiceKnowledgeGraph?.nodes.filter((node) =>
+            node.materials?.some((link) => link.material_id === practiceContextMaterialIdEffective)
+          ) ?? []
+        : [],
+    [practiceKnowledgeGraph, practiceContextMaterialIdEffective]
+  );
+  const qaMaterialKnowledgePointIds = useMemo(
+    () => new Set(qaMaterialKnowledgePoints.map((point) => point.id)),
+    [qaMaterialKnowledgePoints]
+  );
+  const practiceMaterialKnowledgePointIds = useMemo(
+    () => new Set(practiceMaterialKnowledgePoints.map((point) => point.id)),
+    [practiceMaterialKnowledgePoints]
   );
   const qaFocusedKnowledgePoints = useMemo(
-    () => currentMaterialKnowledgePoints.filter((node) => qaFocusedKnowledgePointIds.includes(node.id)),
-    [currentMaterialKnowledgePoints, qaFocusedKnowledgePointIds]
+    () => qaMaterialKnowledgePoints.filter((node) => qaFocusedKnowledgePointIds.includes(node.id)),
+    [qaMaterialKnowledgePoints, qaFocusedKnowledgePointIds]
   );
   const practiceFocusedKnowledgePoints = useMemo(
-    () => currentMaterialKnowledgePoints.filter((node) => practiceFocusedKnowledgePointIds.includes(node.id)),
-    [currentMaterialKnowledgePoints, practiceFocusedKnowledgePointIds]
+    () => practiceMaterialKnowledgePoints.filter((node) => practiceFocusedKnowledgePointIds.includes(node.id)),
+    [practiceMaterialKnowledgePoints, practiceFocusedKnowledgePointIds]
   );
   const visibleMaterials = useMemo(
     () => (selectedTargetId ? materials.filter((item) => item.target_id === selectedTargetId) : []),
@@ -342,10 +396,6 @@ function App() {
 
   function handleSelectLearningTarget(targetId: number) {
     setSelectedTargetId(targetId);
-    setPracticeSubView("questions");
-    setQuestionBatchContext(null);
-    setQuestions([]);
-    setTestResult(null);
     setTargetKnowledge(null);
 
     const currentMaterialStillInTarget = materials.some(
@@ -362,10 +412,6 @@ function App() {
 
   function handleSelectLearningMaterial(materialId: number | null) {
     setSelectedMaterialId(materialId);
-    setPracticeSubView("questions");
-    setQuestionBatchContext(null);
-    setQuestions([]);
-    setTestResult(null);
     if (materialId === null) {
       setKnowledge(null);
       setStructured(null);
@@ -378,6 +424,62 @@ function App() {
     if (material) {
       setSelectedTargetId(material.target_id);
     }
+  }
+
+  function handleSelectGraphTarget(targetId: number) {
+    setGraphContextTargetId(targetId);
+    setGraphContextMaterialId((current) => {
+      const materialStillInTarget = materials.some((material) => material.id === current && material.target_id === targetId);
+      return materialStillInTarget ? current : null;
+    });
+  }
+
+  function handleSelectGraphMaterial(materialId: number | null) {
+    setGraphContextMaterialId(materialId);
+    const material = materials.find((item) => item.id === materialId);
+    if (material) {
+      setGraphContextTargetId(material.target_id);
+    }
+  }
+
+  function handleSelectQaTarget(targetId: number) {
+    setQaContextTargetId(targetId);
+    setQaContextMaterialId((current) => {
+      const materialStillInTarget = materials.some((material) => material.id === current && material.target_id === targetId);
+      return materialStillInTarget ? current : null;
+    });
+  }
+
+  function handleSelectQaMaterial(materialId: number | null) {
+    setQaContextMaterialId(materialId);
+    const material = materials.find((item) => item.id === materialId);
+    if (material) {
+      setQaContextTargetId(material.target_id);
+    }
+  }
+
+  function handleSelectPracticeTarget(targetId: number) {
+    setPracticeContextTargetId(targetId);
+    setPracticeContextMaterialId((current) => {
+      const materialStillInTarget = materials.some((material) => material.id === current && material.target_id === targetId);
+      return materialStillInTarget ? current : null;
+    });
+    setPracticeSubView("questions");
+    setQuestionBatchContext(null);
+    setQuestions([]);
+    setTestResult(null);
+  }
+
+  function handleSelectPracticeMaterial(materialId: number | null) {
+    setPracticeContextMaterialId(materialId);
+    const material = materials.find((item) => item.id === materialId);
+    if (material) {
+      setPracticeContextTargetId(material.target_id);
+    }
+    setPracticeSubView("questions");
+    setQuestionBatchContext(null);
+    setQuestions([]);
+    setTestResult(null);
   }
 
   useEffect(() => {
@@ -399,11 +501,43 @@ function App() {
   }, [selectedTargetId, user]);
 
   useEffect(() => {
+    if (!graphContextTargetIdEffective || !user) {
+      setGraphKnowledgeGraph(null);
+      setGraphTargetKnowledge(null);
+      return;
+    }
+
+    void Promise.all([
+      api.getKnowledgeGraph(graphContextTargetIdEffective).catch(() => null),
+      api.getLatestKnowledge({ targetId: graphContextTargetIdEffective }).catch(() => null)
+    ]).then(([graphData, extractionData]) => {
+      setGraphKnowledgeGraph(extractionData?.knowledge_graph ?? graphData);
+      setGraphTargetKnowledge(extractionData);
+    });
+  }, [graphContextTargetIdEffective, user]);
+
+  useEffect(() => {
+    if (!qaContextTargetIdEffective || !user) {
+      setQaKnowledgeGraph(null);
+      return;
+    }
+    void api.getKnowledgeGraph(qaContextTargetIdEffective).then(setQaKnowledgeGraph).catch(() => setQaKnowledgeGraph(null));
+  }, [qaContextTargetIdEffective, user]);
+
+  useEffect(() => {
+    if (!practiceContextTargetIdEffective || !user) {
+      setPracticeKnowledgeGraph(null);
+      return;
+    }
+    void api.getKnowledgeGraph(practiceContextTargetIdEffective).then(setPracticeKnowledgeGraph).catch(() => setPracticeKnowledgeGraph(null));
+  }, [practiceContextTargetIdEffective, user]);
+
+  useEffect(() => {
     if (view !== "qa" || !user) {
       return;
     }
     void loadQaHistoryForCurrentContext();
-  }, [view, selectedMaterialId, selectedTargetId, user]);
+  }, [view, qaContextMaterialIdEffective, qaContextTargetIdEffective, user]);
 
   useEffect(() => {
     if (view !== "wrong" || !user) {
@@ -414,24 +548,29 @@ function App() {
 
   useEffect(() => {
     setQaFocusedKnowledgePointIds((current) =>
-      current.filter((id) => currentMaterialKnowledgePointIds.has(id))
+      current.filter((id) => qaMaterialKnowledgePointIds.has(id))
     );
-    setPracticeFocusedKnowledgePointIds((current) =>
-      current.filter((id) => currentMaterialKnowledgePointIds.has(id))
-    );
-  }, [currentMaterialKnowledgePointIds]);
+  }, [qaMaterialKnowledgePointIds]);
 
   useEffect(() => {
-    if (view !== "graph" || !selectedMaterialId || !user) {
+    setPracticeFocusedKnowledgePointIds((current) =>
+      current.filter((id) => practiceMaterialKnowledgePointIds.has(id))
+    );
+  }, [practiceMaterialKnowledgePointIds]);
+
+  useEffect(() => {
+    if (view !== "graph" || !graphContextMaterialIdEffective || !user) {
       setGraphMaterialKnowledgeLoading(false);
       setGraphMaterialKnowledgeError(null);
+      setGraphMaterialKnowledge(null);
       return;
     }
 
-    const material = selectedMaterial;
+    const material = graphContextMaterial;
     if (!material || material.parse_status !== "parsed") {
       setGraphMaterialKnowledgeLoading(false);
       setGraphMaterialKnowledgeError(null);
+      setGraphMaterialKnowledge(null);
       return;
     }
 
@@ -444,7 +583,7 @@ function App() {
       .then((existing) => existing ?? api.extractKnowledge({ materialId: material.id }))
       .then((extractionData) => {
         if (ignore) return;
-        setKnowledge(extractionData);
+        setGraphMaterialKnowledge(extractionData);
         setGraphMaterialKnowledgeLoading(false);
       })
       .catch((error) => {
@@ -456,7 +595,7 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [selectedMaterial?.id, selectedMaterial?.parse_status, selectedMaterialId, user, view]);
+  }, [graphContextMaterial?.id, graphContextMaterial?.parse_status, graphContextMaterialIdEffective, user, view]);
 
   useEffect(() => {
     if (!user) {
@@ -558,11 +697,20 @@ function App() {
     ]);
     setTestRecords(recordData.items);
     setKnowledgeGraph(graphData);
+    setGraphKnowledgeGraph((current) => current ?? graphData);
+    setQaKnowledgeGraph((current) => current ?? graphData);
+    setPracticeKnowledgeGraph((current) => current ?? graphData);
 
     const nextTargetId = targetData.items[0]?.id ?? null;
-    const nextMaterialId = materialData.items[0]?.id ?? null;
+    const nextMaterialId = materialData.items.find((item) => item.target_id === nextTargetId)?.id ?? null;
     setSelectedTargetId((current) => current ?? nextTargetId);
     setSelectedMaterialId((current) => current ?? nextMaterialId);
+    setGraphContextTargetId((current) => current ?? nextTargetId);
+    setGraphContextMaterialId((current) => current ?? nextMaterialId);
+    setQaContextTargetId((current) => current ?? nextTargetId);
+    setQaContextMaterialId((current) => current ?? nextMaterialId);
+    setPracticeContextTargetId((current) => current ?? nextTargetId);
+    setPracticeContextMaterialId((current) => current ?? nextMaterialId);
   }
 
   async function loadAiUsage(targetId?: number, materialId?: number) {
@@ -602,8 +750,8 @@ function App() {
   }
 
   async function loadQaHistoryForCurrentContext(context?: { materialId?: number | null; targetId?: number | null }) {
-    const materialId = context?.materialId !== undefined ? context.materialId : selectedMaterialId;
-    const targetId = context?.targetId !== undefined ? context.targetId : selectedTargetId;
+    const materialId = context?.materialId !== undefined ? context.materialId : qaContextMaterialIdEffective;
+    const targetId = context?.targetId !== undefined ? context.targetId : qaContextTargetIdEffective;
 
     if (!materialId && !targetId) {
       setQaRecords([]);
@@ -662,17 +810,10 @@ function App() {
       }
       setStructured(structuredData);
       setKnowledge(extractionData);
-      await loadQaHistoryForCurrentContext({
-        materialId,
-        targetId: detailData.material.target_id
-      });
     } catch (error) {
       setPreview(null);
       setSourcePreview(null);
       setStructured(null);
-      setQaRecords([]);
-      setQaHistoryError(null);
-      setQaHistoryLoading(false);
       setNotice({ tone: "danger", text: `资料上下文加载失败：${readMessage(error)}` });
     }
   }
@@ -687,10 +828,6 @@ function App() {
       setPreview(previewData);
       setStructured(structuredData);
       setKnowledge(materialExtraction);
-      void loadQaHistoryForCurrentContext({
-        materialId: material.id,
-        targetId: material.target_id
-      });
     }
 
     const [graphData, extractionData] = await Promise.all([
@@ -704,10 +841,23 @@ function App() {
         setTargetKnowledge(extractionData);
       }
     }
+    if (graphContextTargetIdEffective === material.target_id) {
+      setGraphKnowledgeGraph(extractionData?.knowledge_graph ?? graphData);
+      setGraphTargetKnowledge(extractionData);
+    }
+    if (qaContextTargetIdEffective === material.target_id) {
+      setQaKnowledgeGraph(extractionData?.knowledge_graph ?? graphData);
+    }
+    if (practiceContextTargetIdEffective === material.target_id) {
+      setPracticeKnowledgeGraph(extractionData?.knowledge_graph ?? graphData);
+    }
     if (selectedMaterialId === material.id) {
       const refreshedMaterialExtraction = await api.getLatestKnowledge({ materialId: material.id }).catch(() => null);
       if (refreshedMaterialExtraction) {
         setKnowledge(refreshedMaterialExtraction);
+        if (graphContextMaterialIdEffective === material.id) {
+          setGraphMaterialKnowledge(refreshedMaterialExtraction);
+        }
       }
     }
 
@@ -745,8 +895,21 @@ function App() {
     if (targetExtraction) {
       setTargetKnowledge(targetExtraction);
     }
+    if (graphContextTargetIdEffective === targetId) {
+      setGraphKnowledgeGraph(targetExtraction?.knowledge_graph ?? graphData);
+      setGraphTargetKnowledge(targetExtraction);
+    }
+    if (qaContextTargetIdEffective === targetId) {
+      setQaKnowledgeGraph(targetExtraction?.knowledge_graph ?? graphData);
+    }
+    if (practiceContextTargetIdEffective === targetId) {
+      setPracticeKnowledgeGraph(targetExtraction?.knowledge_graph ?? graphData);
+    }
     if (materialExtraction) {
       setKnowledge(materialExtraction);
+      if (graphContextMaterialIdEffective === materialId) {
+        setGraphMaterialKnowledge(materialExtraction);
+      }
     }
   }
 
@@ -889,6 +1052,9 @@ function App() {
       const data = await api.createTarget(payload);
       setTargets((current) => [data.target, ...current]);
       setSelectedTargetId(data.target.id);
+      setGraphContextTargetId((current) => current ?? data.target.id);
+      setQaContextTargetId((current) => current ?? data.target.id);
+      setPracticeContextTargetId((current) => current ?? data.target.id);
       setNotice({ tone: "success", text: "目标创建成功。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `目标创建失败：${readMessage(error)}` });
@@ -912,6 +1078,18 @@ function App() {
       setTargets(nextTargets);
       if (selectedTargetId === targetId) {
         setSelectedTargetId(nextTargets[0]?.id ?? null);
+      }
+      if (graphContextTargetId === targetId) {
+        setGraphContextTargetId(nextTargets[0]?.id ?? null);
+        setGraphContextMaterialId(null);
+      }
+      if (qaContextTargetId === targetId) {
+        setQaContextTargetId(nextTargets[0]?.id ?? null);
+        setQaContextMaterialId(null);
+      }
+      if (practiceContextTargetId === targetId) {
+        setPracticeContextTargetId(nextTargets[0]?.id ?? null);
+        setPracticeContextMaterialId(null);
       }
       setNotice({ tone: "info", text: "目标已删除。" });
     } catch (error) {
@@ -950,6 +1128,15 @@ function App() {
         if (view === "detail") {
           setView("materials");
         }
+      }
+      if (graphContextMaterialId === materialId) {
+        setGraphContextMaterialId(null);
+      }
+      if (qaContextMaterialId === materialId) {
+        setQaContextMaterialId(null);
+      }
+      if (practiceContextMaterialId === materialId) {
+        setPracticeContextMaterialId(null);
       }
       setNotice({ tone: "info", text: "资料已删除。" });
     } catch (error) {
@@ -1043,11 +1230,11 @@ function App() {
       return;
     }
 
-    if (scope === "material" && selectedMaterial?.parse_status !== "parsed") {
+    if (scope === "material" && qaContextMaterial?.parse_status !== "parsed") {
       setNotice({ tone: "danger", text: "当前资料尚未解析完成，不能按资料提问。" });
       return;
     }
-    if (scope !== "material" && !selectedTargetId) {
+    if (scope !== "material" && !qaContextTargetIdEffective) {
       setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
       return;
     }
@@ -1060,12 +1247,12 @@ function App() {
     try {
       const data = await api.askQuestion(
         scope === "material"
-          ? { materialId: selectedMaterial?.id, question }
-          : { targetId: selectedTargetId ?? undefined, knowledgePointIds, question }
+          ? { materialId: qaContextMaterial?.id, question }
+          : { targetId: qaContextTargetIdEffective ?? undefined, knowledgePointIds, question }
       );
       await loadQaHistoryForCurrentContext({
-        materialId: selectedMaterialId,
-        targetId: selectedTargetId
+        materialId: qaContextMaterialIdEffective,
+        targetId: qaContextTargetIdEffective
       });
       setQaRecords((current) =>
         current.some((record) => record.qa_record_id === data.qa_record_id)
@@ -1095,11 +1282,11 @@ function App() {
         setNotice({ tone: "danger", text: "请至少选择一种题型。" });
         return;
       }
-      if (scope === "material" && selectedMaterial?.parse_status !== "parsed") {
+      if (scope === "material" && practiceContextMaterial?.parse_status !== "parsed") {
         setNotice({ tone: "danger", text: "当前资料尚未解析完成，不能按资料出题。" });
         return;
       }
-      if (scope !== "material" && !selectedTargetId) {
+      if (scope !== "material" && !practiceContextTargetIdEffective) {
         setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
         return;
       }
@@ -1113,8 +1300,8 @@ function App() {
       setPracticeSubView("questions");
       setQuestionBatchContext(null);
       const data = await api.generateQuestions({
-        materialId: scope === "material" ? selectedMaterial?.id : undefined,
-        targetId: scope === "material" ? undefined : selectedTargetId ?? undefined,
+        materialId: scope === "material" ? practiceContextMaterial?.id : undefined,
+        targetId: scope === "material" ? undefined : practiceContextTargetIdEffective ?? undefined,
         knowledgePointIds: scope === "knowledge_point" ? knowledgePointIds : [],
         extraRequirement,
         count,
@@ -1127,7 +1314,7 @@ function App() {
         setView("practice");
         return;
       }
-      const batchTargetId = data.target_id ?? selectedMaterial?.target_id ?? selectedTargetId ?? null;
+      const batchTargetId = data.target_id ?? practiceContextMaterial?.target_id ?? practiceContextTargetIdEffective ?? null;
       setQuestionBatchContext({
         materialId: data.material_id,
         targetId: batchTargetId,
@@ -1167,6 +1354,15 @@ function App() {
       if (questionBatchContext.targetId) {
         const graph = await api.getKnowledgeGraph(questionBatchContext.targetId).catch(() => null);
         setKnowledgeGraph(graph);
+        if (graphContextTargetIdEffective === questionBatchContext.targetId) {
+          setGraphKnowledgeGraph(graph);
+        }
+        if (qaContextTargetIdEffective === questionBatchContext.targetId) {
+          setQaKnowledgeGraph(graph);
+        }
+        if (practiceContextTargetIdEffective === questionBatchContext.targetId) {
+          setPracticeKnowledgeGraph(graph);
+        }
       }
     } catch (error) {
       setNotice({ tone: "danger", text: `自测提交失败：${readMessage(error)}` });
@@ -1189,9 +1385,6 @@ function App() {
   function handleWrongQuestionFiltersChange(nextFilters: WrongQuestionFilters) {
     setWrongQuestionFilters(nextFilters);
     setWrongRedoResult(null);
-    if (nextFilters.targetId && nextFilters.targetId !== selectedTargetId) {
-      setSelectedTargetId(nextFilters.targetId);
-    }
   }
 
   async function handleStartWrongReview() {
@@ -1199,7 +1392,7 @@ function App() {
     setWrongRedoResult(null);
     try {
       const queue = await api.listWrongQuestionReviewQueue(
-        wrongQuestionFilters.targetId ?? selectedTargetId ?? undefined,
+        wrongQuestionFilters.targetId ?? undefined,
         wrongQuestionFilters.knowledgePointId ?? undefined,
         10
       );
@@ -1309,7 +1502,7 @@ function App() {
   }
 
   async function handleGenerateKnowledgeGraph() {
-    if (!selectedTargetId) {
+    if (!graphContextTargetIdEffective) {
       setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
       return;
     }
@@ -1318,17 +1511,17 @@ function App() {
     setNotice({ tone: "info", text: "已提交知识图谱刷新任务..." });
     try {
       const focusMaterialId =
-        selectedMaterial?.target_id === selectedTargetId && selectedMaterial.parse_status === "parsed"
-          ? selectedMaterial.id
+        graphContextMaterial?.target_id === graphContextTargetIdEffective && graphContextMaterial.parse_status === "parsed"
+          ? graphContextMaterial.id
           : undefined;
       const graphJob = await api.createGraphRefreshJob(
-        selectedTargetId,
+        graphContextTargetIdEffective,
         focusMaterialId,
         true,
         focusMaterialId ? 30 : 12
       );
       await waitForKnowledgeJob(graphJob, {
-        targetId: selectedTargetId,
+        targetId: graphContextTargetIdEffective,
         materialId: focusMaterialId,
         successMessage: focusMaterialId ? "知识图谱已增量刷新。" : "知识图谱已全量刷新。"
       });
@@ -1344,6 +1537,25 @@ function App() {
     try {
       const updated = await api.updateKnowledgePointMastery(id, masteryStatus);
       setKnowledgeGraph((current) =>
+        current
+          ? {
+              ...current,
+              nodes: current.nodes.map((node) =>
+                node.id === id
+                  ? {
+                      ...node,
+                      mastery_status: updated.mastery_status,
+                      mastery_score: updated.mastery_score,
+                      accuracy: updated.accuracy,
+                      answered_count: updated.answered_count,
+                      wrong_count: updated.wrong_count
+                    }
+                  : node
+              )
+            }
+          : current
+      );
+      setGraphKnowledgeGraph((current) =>
         current
           ? {
               ...current,
@@ -1433,6 +1645,11 @@ function App() {
     setKnowledge(null);
     setTargetKnowledge(null);
     setKnowledgeGraph(null);
+    setGraphKnowledgeGraph(null);
+    setGraphTargetKnowledge(null);
+    setGraphMaterialKnowledge(null);
+    setQaKnowledgeGraph(null);
+    setPracticeKnowledgeGraph(null);
     setStructured(null);
     setTestRecords([]);
     setPreview(null);
@@ -1452,6 +1669,12 @@ function App() {
     setView("dashboard");
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
+    setGraphContextTargetId(null);
+    setGraphContextMaterialId(null);
+    setQaContextTargetId(null);
+    setQaContextMaterialId(null);
+    setPracticeContextTargetId(null);
+    setPracticeContextMaterialId(null);
     setQaScope("target");
     setPracticeScope("target");
     setQaFocusedKnowledgePointIds([]);
@@ -1601,8 +1824,25 @@ function App() {
                 void handleExport(() => api.exportKnowledgeSummary(selectedTargetId), "知识总结已开始下载。");
               }
             }}
-            onJumpToQa={() => setView("qa")}
-            onJumpToPractice={() => setView("practice")}
+            onJumpToQa={() => {
+              if (selectedTargetId) {
+                setQaContextTargetId(selectedTargetId);
+              }
+              if (selectedMaterialId) {
+                setQaContextMaterialId(selectedMaterialId);
+              }
+              setView("qa");
+            }}
+            onJumpToPractice={() => {
+              if (selectedTargetId) {
+                setPracticeContextTargetId(selectedTargetId);
+              }
+              if (selectedMaterialId) {
+                setPracticeContextMaterialId(selectedMaterialId);
+              }
+              setPracticeSubView("questions");
+              setView("practice");
+            }}
             onBack={() => setView("materials")}
           />
         ) : null}
@@ -1611,39 +1851,43 @@ function App() {
           <KnowledgeGraphPage
             targets={targets}
             materials={materials}
-            selectedTargetId={selectedTargetId}
-            selectedMaterialId={selectedMaterialId}
-            target={selectedTarget}
-            graph={knowledgeGraph}
-            targetKnowledge={targetKnowledge}
-            materialKnowledge={knowledge}
+            selectedTargetId={graphContextTargetIdEffective}
+            selectedMaterialId={graphContextMaterialIdEffective}
+            target={graphContextTarget}
+            graph={graphKnowledgeGraph}
+            targetKnowledge={graphTargetKnowledge}
+            materialKnowledge={graphMaterialKnowledge}
             materialKnowledgeLoading={graphMaterialKnowledgeLoading}
             materialKnowledgeError={graphMaterialKnowledgeError}
             knowledgeRefreshing={knowledgeRefreshing}
             activeKnowledgeJob={activeKnowledgeJob}
-            onSelectTarget={handleSelectLearningTarget}
-            onSelectMaterial={handleSelectLearningMaterial}
+            onSelectTarget={handleSelectGraphTarget}
+            onSelectMaterial={handleSelectGraphMaterial}
             onGenerate={handleGenerateKnowledgeGraph}
             onUpdatePointMastery={(id, status) => void handleUpdateKnowledgePointMastery(id, status)}
             onFocusQa={(point) => {
+              setQaContextTargetId(graphContextTargetIdEffective);
+              setQaContextMaterialId(graphContextMaterialIdEffective);
               setQaFocusedKnowledgePointIds([point.id]);
               setQaScope("knowledge_point");
               setView("qa");
             }}
             onFocusPractice={(point) => {
+              setPracticeContextTargetId(graphContextTargetIdEffective);
+              setPracticeContextMaterialId(graphContextMaterialIdEffective);
               setPracticeFocusedKnowledgePointIds([point.id]);
               setPracticeScope("knowledge_point");
               setPracticeSubView("questions");
               setView("practice");
             }}
             onExport={() => {
-              if (selectedTargetId) {
-                void handleExport(() => api.exportKnowledgeSummary(selectedTargetId), "知识总结已开始下载。");
+              if (graphContextTargetIdEffective) {
+                void handleExport(() => api.exportKnowledgeSummary(graphContextTargetIdEffective), "知识总结已开始下载。");
               }
             }}
             onExportAnki={() => {
-              if (selectedTargetId) {
-                void handleExport(() => api.exportAnki(selectedTargetId), "Anki CSV 已开始下载。");
+              if (graphContextTargetIdEffective) {
+                void handleExport(() => api.exportAnki(graphContextTargetIdEffective), "Anki CSV 已开始下载。");
               }
             }}
           />
@@ -1653,19 +1897,19 @@ function App() {
           <QaPage
             targets={targets}
             materials={materials}
-            selectedTargetId={selectedTargetId}
-            selectedMaterialId={selectedMaterialId}
-            target={selectedTarget}
-            material={selectedMaterial}
-            knowledgePoints={currentMaterialKnowledgePoints}
+            selectedTargetId={qaContextTargetIdEffective}
+            selectedMaterialId={qaContextMaterialIdEffective}
+            target={qaContextTarget}
+            material={qaContextMaterial}
+            knowledgePoints={qaMaterialKnowledgePoints}
             focusedKnowledgePoints={qaFocusedKnowledgePoints}
             scope={qaScope}
             records={qaRecords}
             loading={qaHistoryLoading}
             error={qaHistoryError}
             isAsking={aiPendingActions.qa}
-            onSelectTarget={handleSelectLearningTarget}
-            onSelectMaterial={handleSelectLearningMaterial}
+            onSelectTarget={handleSelectQaTarget}
+            onSelectMaterial={handleSelectQaMaterial}
             onScopeChange={setQaScope}
             onSelectFocusPoint={(pointId) =>
               setQaFocusedKnowledgePointIds((current) =>
@@ -1683,11 +1927,11 @@ function App() {
           <PracticePage
             targets={targets}
             materials={materials}
-            selectedTargetId={selectedTargetId}
-            selectedMaterialId={selectedMaterialId}
-            target={selectedTarget}
-            material={selectedMaterial}
-            knowledgePoints={currentMaterialKnowledgePoints}
+            selectedTargetId={practiceContextTargetIdEffective}
+            selectedMaterialId={practiceContextMaterialIdEffective}
+            target={practiceContextTarget}
+            material={practiceContextMaterial}
+            knowledgePoints={practiceMaterialKnowledgePoints}
             focusedKnowledgePoints={practiceFocusedKnowledgePoints}
             scope={practiceScope}
             questions={questions}
@@ -1698,8 +1942,8 @@ function App() {
             isSubmitting={aiPendingActions.test}
             explainAnswers={questionExplainAnswers}
             explainLoading={questionExplainLoading}
-            onSelectTarget={handleSelectLearningTarget}
-            onSelectMaterial={handleSelectLearningMaterial}
+            onSelectTarget={handleSelectPracticeTarget}
+            onSelectMaterial={handleSelectPracticeMaterial}
             onScopeChange={setPracticeScope}
             onSelectFocusPoint={(pointId) =>
               setPracticeFocusedKnowledgePointIds((current) =>
@@ -1749,7 +1993,7 @@ function App() {
             }}
             onExport={() =>
               void handleExport(
-                () => api.exportWrongQuestions(selectedTargetId ?? undefined, selectedMaterialId ?? undefined),
+                () => api.exportWrongQuestions(wrongQuestionFilters.targetId ?? undefined, wrongQuestionFilters.materialId ?? undefined),
                 "错题本已开始下载。"
               )
             }
