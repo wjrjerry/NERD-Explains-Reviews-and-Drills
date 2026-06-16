@@ -1037,6 +1037,10 @@ p {
   gap: 9px;
 }
 
+.practice-knowledge-picker {
+  grid-column: 1 / -1;
+}
+
 .field-label-row {
   display: flex;
   align-items: center;

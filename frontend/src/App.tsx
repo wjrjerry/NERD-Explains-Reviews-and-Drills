@@ -242,6 +242,8 @@ function App() {
   const [adminLogs, setAdminLogs] = useState<AdminLog[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
+  const [qaScope, setQaScope] = useState<FocusableScope>("target");
+  const [practiceScope, setPracticeScope] = useState<FocusableScope>("target");
   const [qaFocusedKnowledgePointIds, setQaFocusedKnowledgePointIds] = useState<number[]>([]);
   const [practiceFocusedKnowledgePointIds, setPracticeFocusedKnowledgePointIds] = useState<number[]>([]);
   const [practiceSubView, setPracticeSubView] = useState<PracticeSubView>("questions");
@@ -340,8 +342,6 @@ function App() {
 
   function handleSelectLearningTarget(targetId: number) {
     setSelectedTargetId(targetId);
-    setQaFocusedKnowledgePointIds([]);
-    setPracticeFocusedKnowledgePointIds([]);
     setPracticeSubView("questions");
     setQuestionBatchContext(null);
     setQuestions([]);
@@ -362,8 +362,6 @@ function App() {
 
   function handleSelectLearningMaterial(materialId: number | null) {
     setSelectedMaterialId(materialId);
-    setQaFocusedKnowledgePointIds([]);
-    setPracticeFocusedKnowledgePointIds([]);
     setPracticeSubView("questions");
     setQuestionBatchContext(null);
     setQuestions([]);
@@ -1452,6 +1450,8 @@ function App() {
     setView("dashboard");
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
+    setQaScope("target");
+    setPracticeScope("target");
     setQaFocusedKnowledgePointIds([]);
     setPracticeFocusedKnowledgePointIds([]);
     setPracticeSubView("questions");
@@ -1625,10 +1625,12 @@ function App() {
             onUpdatePointMastery={(id, status) => void handleUpdateKnowledgePointMastery(id, status)}
             onFocusQa={(point) => {
               setQaFocusedKnowledgePointIds([point.id]);
+              setQaScope("knowledge_point");
               setView("qa");
             }}
             onFocusPractice={(point) => {
               setPracticeFocusedKnowledgePointIds([point.id]);
+              setPracticeScope("knowledge_point");
               setPracticeSubView("questions");
               setView("practice");
             }}
@@ -1655,12 +1657,14 @@ function App() {
             material={selectedMaterial}
             knowledgePoints={currentMaterialKnowledgePoints}
             focusedKnowledgePoints={qaFocusedKnowledgePoints}
+            scope={qaScope}
             records={qaRecords}
             loading={qaHistoryLoading}
             error={qaHistoryError}
             isAsking={aiPendingActions.qa}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
+            onScopeChange={setQaScope}
             onSelectFocusPoint={(pointId) =>
               setQaFocusedKnowledgePointIds((current) =>
                 current.includes(pointId)
@@ -1683,6 +1687,7 @@ function App() {
             material={selectedMaterial}
             knowledgePoints={currentMaterialKnowledgePoints}
             focusedKnowledgePoints={practiceFocusedKnowledgePoints}
+            scope={practiceScope}
             questions={questions}
             testResult={testResult}
             subView={practiceSubView}
@@ -1693,6 +1698,7 @@ function App() {
             explainLoading={questionExplainLoading}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
+            onScopeChange={setPracticeScope}
             onSelectFocusPoint={(pointId) =>
               setPracticeFocusedKnowledgePointIds((current) =>
                 current.includes(pointId)
@@ -3097,12 +3103,14 @@ function QaPage({
   material,
   knowledgePoints,
   focusedKnowledgePoints,
+  scope,
   records,
   loading,
   error,
   isAsking,
   onSelectTarget,
   onSelectMaterial,
+  onScopeChange,
   onSelectFocusPoint,
   onAsk,
   onClearFocus
@@ -3115,23 +3123,19 @@ function QaPage({
   material: Material | null;
   knowledgePoints: KnowledgePointReference[];
   focusedKnowledgePoints: KnowledgePointReference[];
+  scope: FocusableScope;
   records: QaRecord[];
   loading: boolean;
   error: string | null;
   isAsking: boolean;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
+  onScopeChange: (scope: FocusableScope) => void;
   onSelectFocusPoint: (pointId: number) => void;
   onAsk: (formData: FormData) => void;
   onClearFocus: () => void;
 }) {
-  const initialScope: FocusableScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
-  const [scope, setScope] = useState<FocusableScope>(initialScope);
   const selectedFocusIds = new Set(focusedKnowledgePoints.map((point) => point.id));
-
-  useEffect(() => {
-    setScope(focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material");
-  }, [selectedTargetId, selectedMaterialId]);
 
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 问答页面。" />;
 
@@ -3155,7 +3159,7 @@ function QaPage({
         <select
           name="qa_scope"
           value={scope}
-          onChange={(event) => setScope(event.currentTarget.value as FocusableScope)}
+          onChange={(event) => onScopeChange(event.currentTarget.value as FocusableScope)}
         >
           <option value="target" disabled={!target}>目标范围</option>
           <option value="knowledge_point" disabled={!target}>聚焦知识点</option>
@@ -3238,6 +3242,7 @@ function PracticePage({
   material,
   knowledgePoints,
   focusedKnowledgePoints,
+  scope,
   questions,
   testResult,
   subView,
@@ -3248,6 +3253,7 @@ function PracticePage({
   explainLoading,
   onSelectTarget,
   onSelectMaterial,
+  onScopeChange,
   onSelectFocusPoint,
   onSubViewChange,
   onGenerate,
@@ -3265,6 +3271,7 @@ function PracticePage({
   material: Material | null;
   knowledgePoints: KnowledgePointReference[];
   focusedKnowledgePoints: KnowledgePointReference[];
+  scope: FocusableScope;
   questions: Question[];
   testResult: TestResult | null;
   subView: PracticeSubView;
@@ -3275,6 +3282,7 @@ function PracticePage({
   explainLoading: Record<number, boolean>;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
+  onScopeChange: (scope: FocusableScope) => void;
   onSelectFocusPoint: (pointId: number) => void;
   onSubViewChange: (view: PracticeSubView) => void;
   onGenerate: (formData: FormData) => void;
@@ -3289,8 +3297,6 @@ function PracticePage({
   const [questionHints, setQuestionHints] = useState<Record<number, Record<string, string>>>({});
   const [hintLoading, setHintLoading] = useState<Record<string, boolean>>({});
   const [questionSolutions, setQuestionSolutions] = useState<Record<number, QuestionSolution>>({});
-  const initialScope: FocusableScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
-  const [scope, setScope] = useState<FocusableScope>(initialScope);
   const selectedFocusIds = new Set(focusedKnowledgePoints.map((point) => point.id));
 
   useEffect(() => {
@@ -3300,10 +3306,6 @@ function PracticePage({
     setHintLoading({});
     setQuestionSolutions({});
   }, [questions]);
-
-  useEffect(() => {
-    setScope(focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material");
-  }, [selectedTargetId, selectedMaterialId]);
 
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 出题页面。" />;
 
@@ -3418,7 +3420,7 @@ function PracticePage({
             <select
               name="question_scope"
               value={scope}
-              onChange={(event) => setScope(event.currentTarget.value as FocusableScope)}
+              onChange={(event) => onScopeChange(event.currentTarget.value as FocusableScope)}
             >
               <option value="target" disabled={!target}>目标范围</option>
               <option value="knowledge_point" disabled={!target}>聚焦知识点</option>
@@ -3454,28 +3456,35 @@ function PracticePage({
           </label>
         </div>
         {scope === "knowledge_point" ? (
-          <div className="focused-points">
+          <div className="knowledge-point-picker practice-knowledge-picker">
+            <div className="field-label-row">
+              <span>当前资料关联知识点</span>
+              {focusedKnowledgePoints.length ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
+            </div>
             {knowledgePoints.length ? (
-              <>
+              <div className="tag-cloud selectable-tags">
                 {knowledgePoints.map((point) => (
-                  <label key={point.id} className="checkbox-row">
-                    <input
-                      name="knowledge_point_ids"
-                      type="checkbox"
-                      value={point.id}
-                      checked={selectedFocusIds.has(point.id)}
-                      onChange={() => onSelectFocusPoint(point.id)}
-                    />
-                    <span>{point.name}</span>
-                  </label>
+                  <button
+                    key={point.id}
+                    type="button"
+                    className={selectedFocusIds.has(point.id) ? "selected" : ""}
+                    onClick={() => onSelectFocusPoint(point.id)}
+                    title={`添加或移除「${point.name}」`}
+                  >
+                    {point.name}
+                  </button>
                 ))}
-                {focusedKnowledgePoints.length ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
-              </>
+              </div>
             ) : (
               <p className="muted-text">当前资料还没有关联知识点，请先刷新图谱或重新提炼。</p>
             )}
           </div>
         ) : null}
+        {scope === "knowledge_point"
+          ? focusedKnowledgePoints.map((point) => (
+              <input key={point.id} type="hidden" name="knowledge_point_ids" value={point.id} />
+            ))
+          : null}
         <div className="toolbar-actions">
           <button className="primary-button" type="submit" disabled={isGenerating || isSubmitting}>
             {isGenerating ? <LoaderCircle className="spin-icon" size={16} /> : <Sparkles size={16} />}
