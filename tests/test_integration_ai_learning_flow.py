@@ -13,7 +13,7 @@ def test_knowledge_extraction_qa_and_history_flow() -> None:
         "POST",
         "/knowledge/extract",
         token=token,
-        payload={"material_id": material["id"], "target_id": target["id"]},
+        payload={"material_id": material["id"]},
     )
     assert status == 200
     assert_success_response(body)

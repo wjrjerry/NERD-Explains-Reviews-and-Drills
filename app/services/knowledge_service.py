@@ -219,7 +219,7 @@ async def extract_knowledge(
     current_user: User,
 ) -> KnowledgeExtractResponse:
     """Run material-level or target-level extraction from one public endpoint."""
-    if payload.material_id is not None and payload.target_id is None:
+    if payload.material_id is not None:
         material = await MaterialRepository.get_by_id(
             db,
             material_id=payload.material_id,
@@ -227,11 +227,16 @@ async def extract_knowledge(
         )
         if material is None:
             raise ValueError("资料不存在")
-        return await extract_material_knowledge(
-            db,
-            current_user=current_user,
-            material=material,
-        )
+        if material.parse_status != MaterialParseStatus.parsed or not material.parsed_text:
+            raise ValueError("资料未解析完成")
+        if payload.target_id is not None and material.target_id != payload.target_id:
+            raise ValueError("资料不属于该学习目标")
+        if payload.target_id is None:
+            return await extract_material_knowledge(
+                db,
+                current_user=current_user,
+                material=material,
+            )
 
     if payload.target_id is None:
         raise ValueError("material_id 或 target_id 至少需要提供一个")

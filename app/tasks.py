@@ -23,6 +23,14 @@ def _run_in_worker_loop(coro: Coroutine[Any, Any, Any]) -> Any:
         return _worker_loop.run_until_complete(coro)
 
 
+def _run_in_fresh_loop(coro: Coroutine[Any, Any, Any]) -> Any:
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 def _run_async(coro: Coroutine[Any, Any, Any]) -> Any:
     """Run async service code from a Celery task, including eager ASGI tests."""
     try:
@@ -34,7 +42,7 @@ def _run_async(coro: Coroutine[Any, Any, Any]) -> Any:
 
     def runner() -> None:
         try:
-            result["value"] = _run_in_worker_loop(coro)
+            result["value"] = _run_in_fresh_loop(coro)
         except BaseException as exc:  # pragma: no cover - re-raised below
             result["error"] = exc
 
