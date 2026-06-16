@@ -1169,6 +1169,25 @@ blockquote {
   padding-top: 2px;
 }
 
+.practice-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.practice-subnav button {
+  border-radius: 999px;
+  padding: 9px 12px;
+  color: #344054;
+  background: rgba(255, 255, 255, 0.66);
+  font-weight: 800;
+}
+
+.practice-subnav button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .hint-box {
   display: grid;
   gap: 10px;
@@ -1348,6 +1367,7 @@ blockquote {
 .summary-chip,
 .usage-card {
   display: grid;
+  min-width: 0;
   gap: 5px;
   border: 1px solid rgba(35, 47, 72, 0.08);
   border-radius: 14px;
@@ -1355,11 +1375,18 @@ blockquote {
   background: rgba(255, 255, 255, 0.62);
 }
 
+.usage-card strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .summary-chip span,
 .usage-card span,
 .usage-card small {
+  min-width: 0;
   color: #6d7788;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .task-row {
@@ -1441,7 +1468,7 @@ blockquote {
 }
 
 .usage-grid {
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin-top: 14px;
 }
 
