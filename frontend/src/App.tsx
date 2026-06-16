@@ -68,10 +68,13 @@ type View =
   | "graph"
   | "qa"
   | "practice"
-  | "results"
   | "wrong"
   | "plans"
   | "usage";
+
+type PracticeSubView = "questions" | "results";
+
+type FocusableScope = "target" | "knowledge_point" | "material";
 
 type AdminView = "overview" | "users" | "materials" | "tasks" | "logs" | "health";
 
@@ -101,7 +104,7 @@ type MaterialSourcePreview = {
 type QuestionBatchContext = {
   materialId: number;
   targetId: number | null;
-  scope: "material" | "target";
+  scope: "material" | "target" | "knowledge_point";
 };
 
 const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard }> = [
@@ -111,7 +114,6 @@ const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard 
   { view: "graph", label: "知识图谱", icon: Network },
   { view: "qa", label: "AI 问答", icon: MessageSquare },
   { view: "practice", label: "AI 出题", icon: ClipboardCheck },
-  { view: "results", label: "测试结果", icon: CheckCircle2 },
   { view: "wrong", label: "错题本", icon: AlertTriangle },
   { view: "plans", label: "复习计划", icon: CalendarDays },
   { view: "usage", label: "AI 用量", icon: Bot }
@@ -210,7 +212,9 @@ function App() {
   const [adminLogs, setAdminLogs] = useState<AdminLog[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
-  const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
+  const [qaFocusedKnowledgePointIds, setQaFocusedKnowledgePointIds] = useState<number[]>([]);
+  const [practiceFocusedKnowledgePointIds, setPracticeFocusedKnowledgePointIds] = useState<number[]>([]);
+  const [practiceSubView, setPracticeSubView] = useState<PracticeSubView>("questions");
   const [questionBatchContext, setQuestionBatchContext] = useState<QuestionBatchContext | null>(null);
   const [knowledgeRefreshing, setKnowledgeRefreshing] = useState(false);
   const [aiPendingActions, setAiPendingActions] = useState<AiPendingActions>(initialAiPendingActions);
@@ -227,9 +231,26 @@ function App() {
     () => materials.find((item) => item.id === selectedMaterialId) ?? null,
     [materials, selectedMaterialId]
   );
-  const focusedKnowledgePoints = useMemo(
-    () => knowledgeGraph?.nodes.filter((node) => focusedKnowledgePointIds.includes(node.id)) ?? [],
-    [focusedKnowledgePointIds, knowledgeGraph]
+  const currentMaterialKnowledgePoints = useMemo(
+    () =>
+      selectedMaterialId
+        ? knowledgeGraph?.nodes.filter((node) =>
+            node.materials?.some((link) => link.material_id === selectedMaterialId)
+          ) ?? []
+        : [],
+    [knowledgeGraph, selectedMaterialId]
+  );
+  const currentMaterialKnowledgePointIds = useMemo(
+    () => new Set(currentMaterialKnowledgePoints.map((point) => point.id)),
+    [currentMaterialKnowledgePoints]
+  );
+  const qaFocusedKnowledgePoints = useMemo(
+    () => currentMaterialKnowledgePoints.filter((node) => qaFocusedKnowledgePointIds.includes(node.id)),
+    [currentMaterialKnowledgePoints, qaFocusedKnowledgePointIds]
+  );
+  const practiceFocusedKnowledgePoints = useMemo(
+    () => currentMaterialKnowledgePoints.filter((node) => practiceFocusedKnowledgePointIds.includes(node.id)),
+    [currentMaterialKnowledgePoints, practiceFocusedKnowledgePointIds]
   );
   const visibleMaterials = useMemo(
     () => (selectedTargetId ? materials.filter((item) => item.target_id === selectedTargetId) : []),
@@ -294,7 +315,9 @@ function App() {
 
   function handleSelectLearningTarget(targetId: number) {
     setSelectedTargetId(targetId);
-    setFocusedKnowledgePointIds([]);
+    setQaFocusedKnowledgePointIds([]);
+    setPracticeFocusedKnowledgePointIds([]);
+    setPracticeSubView("questions");
     setQuestionBatchContext(null);
     setQuestions([]);
     setTestResult(null);
@@ -314,6 +337,9 @@ function App() {
 
   function handleSelectLearningMaterial(materialId: number | null) {
     setSelectedMaterialId(materialId);
+    setQaFocusedKnowledgePointIds([]);
+    setPracticeFocusedKnowledgePointIds([]);
+    setPracticeSubView("questions");
     setQuestionBatchContext(null);
     setQuestions([]);
     setTestResult(null);
@@ -355,6 +381,15 @@ function App() {
     }
     void loadQaHistoryForCurrentContext();
   }, [view, selectedMaterialId, selectedTargetId, user]);
+
+  useEffect(() => {
+    setQaFocusedKnowledgePointIds((current) =>
+      current.filter((id) => currentMaterialKnowledgePointIds.has(id))
+    );
+    setPracticeFocusedKnowledgePointIds((current) =>
+      current.filter((id) => currentMaterialKnowledgePointIds.has(id))
+    );
+  }, [currentMaterialKnowledgePointIds]);
 
   useEffect(() => {
     if (view !== "graph" || !selectedMaterialId || !user) {
@@ -967,6 +1002,10 @@ function App() {
       setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
       return;
     }
+    if (scope === "knowledge_point" && !knowledgePointIds.length) {
+      setNotice({ tone: "danger", text: "请选择至少一个当前资料关联的知识点。" });
+      return;
+    }
 
     setAiPendingActions((current) => ({ ...current, qa: true }));
     try {
@@ -1015,13 +1054,19 @@ function App() {
         setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
         return;
       }
+      if (scope === "knowledge_point" && !knowledgePointIds.length) {
+        setNotice({ tone: "danger", text: "请选择至少一个当前资料关联的知识点。" });
+        return;
+      }
 
       setAiPendingActions((current) => ({ ...current, questions: true }));
+      setTestResult(null);
+      setPracticeSubView("questions");
       setQuestionBatchContext(null);
       const data = await api.generateQuestions({
         materialId: scope === "material" ? selectedMaterial?.id : undefined,
         targetId: scope === "material" ? undefined : selectedTargetId ?? undefined,
-        knowledgePointIds,
+        knowledgePointIds: scope === "knowledge_point" ? knowledgePointIds : [],
         extraRequirement,
         count,
         difficulty,
@@ -1037,7 +1082,7 @@ function App() {
       setQuestionBatchContext({
         materialId: data.material_id,
         targetId: batchTargetId,
-        scope: scope === "material" ? "material" : "target"
+        scope: scope === "material" ? "material" : scope === "knowledge_point" ? "knowledge_point" : "target"
       });
       setQuestions(data.questions);
       setView("practice");
@@ -1061,7 +1106,8 @@ function App() {
     try {
       const data = await api.submitTest(questionBatchContext.materialId, questionBatchContext.targetId, answers);
       setTestResult(data);
-      setView("results");
+      setPracticeSubView("results");
+      setView("practice");
       setNotice({ tone: "success", text: "自测已提交。" });
       const wrongData = await api
         .listWrongQuestions(1, 10, questionBatchContext.targetId ?? undefined, questionBatchContext.materialId)
@@ -1243,7 +1289,9 @@ function App() {
     setView("dashboard");
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
-    setFocusedKnowledgePointIds([]);
+    setQaFocusedKnowledgePointIds([]);
+    setPracticeFocusedKnowledgePointIds([]);
+    setPracticeSubView("questions");
     setQuestionBatchContext(null);
     setNotice({ tone: "info", text: "已退出登录。" });
   }
@@ -1415,11 +1463,12 @@ function App() {
             onGenerate={handleGenerateKnowledgeGraph}
             onUpdatePointMastery={(id, status) => void handleUpdateKnowledgePointMastery(id, status)}
             onFocusQa={(point) => {
-              setFocusedKnowledgePointIds([point.id]);
+              setQaFocusedKnowledgePointIds([point.id]);
               setView("qa");
             }}
             onFocusPractice={(point) => {
-              setFocusedKnowledgePointIds([point.id]);
+              setPracticeFocusedKnowledgePointIds([point.id]);
+              setPracticeSubView("questions");
               setView("practice");
             }}
             onExport={() => {
@@ -1443,8 +1492,8 @@ function App() {
             selectedMaterialId={selectedMaterialId}
             target={selectedTarget}
             material={selectedMaterial}
-            knowledgePoints={knowledgeGraph?.nodes ?? []}
-            focusedKnowledgePoints={focusedKnowledgePoints}
+            knowledgePoints={currentMaterialKnowledgePoints}
+            focusedKnowledgePoints={qaFocusedKnowledgePoints}
             records={qaRecords}
             loading={qaHistoryLoading}
             error={qaHistoryError}
@@ -1452,14 +1501,14 @@ function App() {
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onSelectFocusPoint={(pointId) =>
-              setFocusedKnowledgePointIds((current) =>
+              setQaFocusedKnowledgePointIds((current) =>
                 current.includes(pointId)
                   ? current.filter((id) => id !== pointId)
                   : [...current, pointId]
               )
             }
             onAsk={handleAskQuestion}
-            onClearFocus={() => setFocusedKnowledgePointIds([])}
+            onClearFocus={() => setQaFocusedKnowledgePointIds([])}
           />
         ) : null}
 
@@ -1471,21 +1520,30 @@ function App() {
             selectedMaterialId={selectedMaterialId}
             target={selectedTarget}
             material={selectedMaterial}
-            focusedKnowledgePoints={focusedKnowledgePoints}
+            knowledgePoints={currentMaterialKnowledgePoints}
+            focusedKnowledgePoints={practiceFocusedKnowledgePoints}
             questions={questions}
+            testResult={testResult}
+            subView={practiceSubView}
             questionBatchContext={questionBatchContext}
             isGenerating={aiPendingActions.questions}
             isSubmitting={aiPendingActions.test}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
+            onSelectFocusPoint={(pointId) =>
+              setPracticeFocusedKnowledgePointIds((current) =>
+                current.includes(pointId)
+                  ? current.filter((id) => id !== pointId)
+                  : [...current, pointId]
+              )
+            }
+            onSubViewChange={setPracticeSubView}
             onGenerate={handleGenerateQuestions}
             onSubmit={handleSubmitTest}
-            onClearFocus={() => setFocusedKnowledgePointIds([])}
+            onOpenWrong={() => setView("wrong")}
+            onOpenPlans={() => setView("plans")}
+            onClearFocus={() => setPracticeFocusedKnowledgePointIds([])}
           />
-        ) : null}
-
-        {view === "results" ? (
-          <ResultsPage result={testResult} questions={questions} onOpenWrong={() => setView("wrong")} onOpenPlans={() => setView("plans")} />
         ) : null}
 
         {view === "wrong" ? (
@@ -2768,10 +2826,15 @@ function QaPage({
   onAsk: (formData: FormData) => void;
   onClearFocus: () => void;
 }) {
-  if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 问答页面。" />;
-
-  const defaultScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
+  const initialScope: FocusableScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
+  const [scope, setScope] = useState<FocusableScope>(initialScope);
   const selectedFocusIds = new Set(focusedKnowledgePoints.map((point) => point.id));
+
+  useEffect(() => {
+    setScope(focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material");
+  }, [selectedTargetId, selectedMaterialId]);
+
+  if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 问答页面。" />;
 
   return (
     <div className="qa-layout">
@@ -2790,10 +2853,19 @@ function QaPage({
         <p className="muted-text">
           当前目标：{target?.title ?? "未选择"}；当前资料：{material?.original_filename ?? "未选择"}
         </p>
-        {target ? (
+        <select
+          name="qa_scope"
+          value={scope}
+          onChange={(event) => setScope(event.currentTarget.value as FocusableScope)}
+        >
+          <option value="target" disabled={!target}>目标范围</option>
+          <option value="knowledge_point" disabled={!target}>聚焦知识点</option>
+          <option value="material" disabled={material?.parse_status !== "parsed"}>当前资料</option>
+        </select>
+        {target && scope === "knowledge_point" ? (
           <div className="knowledge-point-picker">
             <div className="field-label-row">
-              <span>聚焦知识点</span>
+              <span>当前资料关联知识点</span>
               {focusedKnowledgePoints.length ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
             </div>
             {knowledgePoints.length ? (
@@ -2811,18 +2883,15 @@ function QaPage({
                 ))}
               </div>
             ) : (
-              <p className="muted-text">当前目标还没有可选知识点，请先生成知识图谱。</p>
+              <p className="muted-text">当前资料还没有关联知识点，请先刷新图谱或重新提炼。</p>
             )}
           </div>
         ) : null}
-        <select name="qa_scope" key={`${defaultScope}-${focusedKnowledgePoints.map((point) => point.id).join("-") || "none"}`} defaultValue={defaultScope}>
-          <option value="target" disabled={!target}>目标范围</option>
-          <option value="knowledge_point" disabled={!target || !focusedKnowledgePoints.length}>聚焦知识点</option>
-          <option value="material" disabled={material?.parse_status !== "parsed"}>当前资料</option>
-        </select>
-        {focusedKnowledgePoints.map((point) => (
-          <input key={point.id} type="hidden" name="knowledge_point_ids" value={point.id} />
-        ))}
+        {scope === "knowledge_point"
+          ? focusedKnowledgePoints.map((point) => (
+              <input key={point.id} type="hidden" name="knowledge_point_ids" value={point.id} />
+            ))
+          : null}
         <textarea name="question" placeholder="提出你的问题，可围绕目标、资料或选中的知识点" required />
         <button className="primary-button" type="submit" disabled={isAsking}>
           {isAsking ? <LoaderCircle className="spin-icon" size={16} /> : <MessageSquare size={16} />}
@@ -2867,15 +2936,22 @@ function PracticePage({
   selectedMaterialId,
   target,
   material,
+  knowledgePoints,
   focusedKnowledgePoints,
   questions,
+  testResult,
+  subView,
   questionBatchContext,
   isGenerating,
   isSubmitting,
   onSelectTarget,
   onSelectMaterial,
+  onSelectFocusPoint,
+  onSubViewChange,
   onGenerate,
   onSubmit,
+  onOpenWrong,
+  onOpenPlans,
   onClearFocus
 }: {
   targets: StudyTarget[];
@@ -2884,15 +2960,22 @@ function PracticePage({
   selectedMaterialId: number | null;
   target: StudyTarget | null;
   material: Material | null;
+  knowledgePoints: KnowledgePointReference[];
   focusedKnowledgePoints: KnowledgePointReference[];
   questions: Question[];
+  testResult: TestResult | null;
+  subView: PracticeSubView;
   questionBatchContext: QuestionBatchContext | null;
   isGenerating: boolean;
   isSubmitting: boolean;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
+  onSelectFocusPoint: (pointId: number) => void;
+  onSubViewChange: (view: PracticeSubView) => void;
   onGenerate: (formData: FormData) => void;
   onSubmit: (answers: TestSubmitAnswer[]) => void;
+  onOpenWrong: () => void;
+  onOpenPlans: () => void;
   onClearFocus: () => void;
 }) {
   const [objectiveAnswers, setObjectiveAnswers] = useState<Record<number, string[]>>({});
@@ -2900,6 +2983,9 @@ function PracticePage({
   const [questionHints, setQuestionHints] = useState<Record<number, Record<string, string>>>({});
   const [hintLoading, setHintLoading] = useState<Record<string, boolean>>({});
   const [questionSolutions, setQuestionSolutions] = useState<Record<number, QuestionSolution>>({});
+  const initialScope: FocusableScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
+  const [scope, setScope] = useState<FocusableScope>(initialScope);
+  const selectedFocusIds = new Set(focusedKnowledgePoints.map((point) => point.id));
 
   useEffect(() => {
     setObjectiveAnswers({});
@@ -2909,6 +2995,10 @@ function PracticePage({
     setQuestionSolutions({});
   }, [questions]);
 
+  useEffect(() => {
+    setScope(focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material");
+  }, [selectedTargetId, selectedMaterialId]);
+
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 出题页面。" />;
 
   const submitAnswers = questions.map((question) =>
@@ -2916,7 +3006,6 @@ function PracticePage({
       ? { question_id: question.id, answer_text: subjectiveAnswers[question.id]?.trim() ?? "" }
       : { question_id: question.id, answer: objectiveAnswers[question.id] ?? [] }
   );
-  const defaultScope = focusedKnowledgePoints.length && target ? "target" : target ? "target" : "material";
   const batchMaterial = questionBatchContext
     ? materials.find((item) => item.id === questionBatchContext.materialId)
     : null;
@@ -3020,8 +3109,13 @@ function PracticePage({
         <div className="practice-form-grid">
           <label className="field-block">
             <span>出题范围</span>
-            <select name="question_scope" defaultValue={defaultScope}>
-              <option value="target" disabled={!target}>目标/知识点</option>
+            <select
+              name="question_scope"
+              value={scope}
+              onChange={(event) => setScope(event.currentTarget.value as FocusableScope)}
+            >
+              <option value="target" disabled={!target}>目标范围</option>
+              <option value="knowledge_point" disabled={!target}>聚焦知识点</option>
               <option value="material" disabled={material?.parse_status !== "parsed"}>当前资料</option>
             </select>
           </label>
@@ -3053,15 +3147,27 @@ function PracticePage({
             <textarea name="extra_requirement" placeholder="例如：偏期末考试风格，优先考概念辨析；选择题干扰项要更接近真实易错点。" />
           </label>
         </div>
-        {focusedKnowledgePoints.length ? (
+        {scope === "knowledge_point" ? (
           <div className="focused-points">
-            {focusedKnowledgePoints.map((point) => (
-              <label key={point.id} className="checkbox-row">
-                <input name="knowledge_point_ids" type="checkbox" value={point.id} defaultChecked />
-                <span>{point.name}</span>
-              </label>
-            ))}
-            <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button>
+            {knowledgePoints.length ? (
+              <>
+                {knowledgePoints.map((point) => (
+                  <label key={point.id} className="checkbox-row">
+                    <input
+                      name="knowledge_point_ids"
+                      type="checkbox"
+                      value={point.id}
+                      checked={selectedFocusIds.has(point.id)}
+                      onChange={() => onSelectFocusPoint(point.id)}
+                    />
+                    <span>{point.name}</span>
+                  </label>
+                ))}
+                {focusedKnowledgePoints.length ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
+              </>
+            ) : (
+              <p className="muted-text">当前资料还没有关联知识点，请先刷新图谱或重新提炼。</p>
+            )}
           </div>
         ) : null}
         <div className="toolbar-actions">
@@ -3080,12 +3186,33 @@ function PracticePage({
         <p className="muted-text">
           本批题目来源：{batchTarget?.title ?? `目标 ${questionBatchContext.targetId ?? "未限定"}`} ·
           {batchMaterial?.original_filename ?? `资料 ${questionBatchContext.materialId}`} ·
-          {questionBatchContext.scope === "material" ? "按资料生成" : "按目标/知识点生成"}
+          {questionBatchContext.scope === "material" ? "按资料生成" : questionBatchContext.scope === "knowledge_point" ? "按聚焦知识点生成" : "按目标生成"}
         </p>
       ) : (
         <p className="muted-text">请先生成题目，系统会自动记录本批题目的真实资料归属后再允许提交自测。</p>
       )}
 
+      <div className="practice-subnav">
+        <button
+          type="button"
+          className={subView === "questions" ? "active-pill" : ""}
+          onClick={() => onSubViewChange("questions")}
+        >
+          练习题
+        </button>
+        <button
+          type="button"
+          className={subView === "results" ? "active-pill" : ""}
+          disabled={!testResult}
+          onClick={() => onSubViewChange("results")}
+        >
+          测试结果
+        </button>
+      </div>
+
+      {subView === "results" ? (
+        <ResultsPage result={testResult} questions={questions} onOpenWrong={onOpenWrong} onOpenPlans={onOpenPlans} />
+      ) : (
       <div className="question-list">
         {questions.length ? (
           questions.map((question, index) => (
@@ -3186,6 +3313,7 @@ function PracticePage({
           <EmptyPanel text="还没有题目，先使用上方表单生成一组练习题。" />
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -3518,7 +3646,6 @@ function pageTitle(view: View) {
     graph: "知识图谱与掌握度",
     qa: "AI 问答页",
     practice: "AI 出题练习页",
-    results: "自测结果页",
     wrong: "错题本页",
     plans: "复习计划页",
     usage: "AI 用量与计费"
