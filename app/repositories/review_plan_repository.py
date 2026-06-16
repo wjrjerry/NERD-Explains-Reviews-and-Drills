@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.review_plan import ReviewPlan, ReviewPlanTask
+from app.models.study_target import StudyTarget
 
 
 class ReviewPlanRepository:
@@ -76,17 +77,24 @@ class ReviewPlanRepository:
         page_size: int = 10,
     ) -> tuple[list[ReviewPlan], int]:
         """Query review plans with pagination and optional target filter."""
-        conditions = [ReviewPlan.user_id == user_id]
+        conditions = [
+            ReviewPlan.user_id == user_id,
+            StudyTarget.is_deleted.is_(False),
+        ]
         if target_id is not None:
             conditions.append(ReviewPlan.target_id == target_id)
 
         total_result = await db.execute(
-            select(func.count()).select_from(ReviewPlan).where(*conditions)
+            select(func.count())
+            .select_from(ReviewPlan)
+            .join(StudyTarget, StudyTarget.id == ReviewPlan.target_id)
+            .where(*conditions)
         )
         total = int(total_result.scalar_one())
 
         result = await db.execute(
             select(ReviewPlan)
+            .join(StudyTarget, StudyTarget.id == ReviewPlan.target_id)
             .options(selectinload(ReviewPlan.tasks))
             .where(*conditions)
             .order_by(ReviewPlan.created_at.desc(), ReviewPlan.id.desc())
@@ -105,10 +113,12 @@ class ReviewPlanRepository:
         """Fetch one review plan with tasks if it belongs to the user."""
         result = await db.execute(
             select(ReviewPlan)
+            .join(StudyTarget, StudyTarget.id == ReviewPlan.target_id)
             .options(selectinload(ReviewPlan.tasks))
             .where(
                 ReviewPlan.id == plan_id,
                 ReviewPlan.user_id == user_id,
+                StudyTarget.is_deleted.is_(False),
             )
         )
         return result.scalar_one_or_none()
@@ -125,9 +135,11 @@ class ReviewPlanRepository:
         result = await db.execute(
             select(ReviewPlanTask)
             .join(ReviewPlan, ReviewPlan.id == ReviewPlanTask.plan_id)
+            .join(StudyTarget, StudyTarget.id == ReviewPlan.target_id)
             .where(
                 ReviewPlanTask.id == task_id,
                 ReviewPlan.user_id == user_id,
+                StudyTarget.is_deleted.is_(False),
             )
         )
         task = result.scalar_one_or_none()
