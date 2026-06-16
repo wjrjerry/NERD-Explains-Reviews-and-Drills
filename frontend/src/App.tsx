@@ -2126,13 +2126,13 @@ function AdminOverview({
   return (
     <div className="grid admin-grid">
       <MetricCard icon={UserCircle} label="注册人数" value={summary?.total_users ?? 0} hint="未删除用户" />
-      <MetricCard icon={UserCircle} label="学生 / 管理员" value={`${summary?.student_users ?? 0} / ${summary?.admin_users ?? 0}`} hint="role 分布" />
+      <MetricCard icon={UserCircle} label="学生 / 管理员" value={`${summary?.student_users ?? 0} / ${summary?.admin_users ?? 0}`} hint="用户角色分布" />
       <MetricCard icon={Shield} label="启用 / 禁用" value={`${summary?.active_users ?? 0} / ${summary?.inactive_users ?? 0}`} hint="账号状态" />
       <MetricCard icon={FileText} label="资料总数" value={summary?.total_materials ?? 0} hint="全站资料" />
-      <MetricCard icon={AlertTriangle} label="失败资料" value={failedMaterials} hint="parse_status = failed" />
-      <MetricCard icon={AlertTriangle} label="失败任务" value={summary?.failed_tasks ?? 0} hint="task_status = failed" />
-      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="GET /health/db" />
-      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="GET /health/redis" />
+      <MetricCard icon={AlertTriangle} label="失败资料" value={failedMaterials} hint="解析失败资料" />
+      <MetricCard icon={AlertTriangle} label="失败任务" value={summary?.failed_tasks ?? 0} hint="解析任务失败" />
+      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="数据存储连接" />
+      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="缓存与任务队列" />
 
       <section className="panel wide">
         <PanelTitle icon={AlertTriangle} title="解析状态分布" />
@@ -2252,9 +2252,9 @@ function AdminHealthPage({
 }) {
   return (
     <div className="grid admin-grid">
-      <MetricCard icon={Shield} label="API 健康" value={health.api?.status ?? "error"} hint="GET /health" />
-      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="GET /health/db" />
-      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="GET /health/redis" />
+      <MetricCard icon={Shield} label="API 健康" value={health.api?.status ?? "error"} hint="后端服务状态" />
+      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="数据存储连接" />
+      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="缓存与任务队列" />
     </div>
   );
 }
