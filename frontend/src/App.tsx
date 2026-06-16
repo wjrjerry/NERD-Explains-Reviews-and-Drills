@@ -2277,6 +2277,35 @@ function AuthPage({
 
   return (
     <div className="auth-screen">
+      <div className="auth-background-panels" aria-hidden="true">
+        <section className="auth-bg-panel auth-bg-panel-queue">
+          <div>
+            <strong>资料解析</strong>
+            <span>自动入库中</span>
+          </div>
+          <p>PDF 合同案例.pdf</p>
+          <p>课堂笔记.txt</p>
+          <p>图片讲义 OCR</p>
+        </section>
+        <section className="auth-bg-panel auth-bg-panel-mastery">
+          <div>
+            <strong>掌握概览</strong>
+            <span>知识点追踪</span>
+          </div>
+          <div className="auth-bg-progress"><i style={{ width: "72%" }} /></div>
+          <div className="auth-bg-progress"><i style={{ width: "48%" }} /></div>
+          <div className="auth-bg-progress"><i style={{ width: "86%" }} /></div>
+        </section>
+        <section className="auth-bg-panel auth-bg-panel-review">
+          <div>
+            <strong>今日复习</strong>
+            <span>4 项待完成</span>
+          </div>
+          <p>错题重做</p>
+          <p>知识图谱回顾</p>
+          <p>生成自测题</p>
+        </section>
+      </div>
       <div className="auth-page-content">
         <section className="auth-copy">
           <div className="brand large">

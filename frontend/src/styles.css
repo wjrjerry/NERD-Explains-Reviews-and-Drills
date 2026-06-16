@@ -2155,6 +2155,7 @@ button.summary-chip:focus-visible {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 0;
   background-image:
     linear-gradient(rgba(0, 122, 255, 0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 122, 255, 0.06) 1px, transparent 1px);
@@ -2166,6 +2167,7 @@ button.summary-chip:focus-visible {
 .auth-screen::after {
   content: "";
   position: absolute;
+  z-index: 0;
   right: -140px;
   top: 11%;
   width: min(760px, 64vw);
@@ -2178,6 +2180,84 @@ button.summary-chip:focus-visible {
   box-shadow: 0 36px 90px rgba(44, 57, 82, 0.12);
   transform: rotate(-7deg);
   pointer-events: none;
+}
+
+.auth-background-panels {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.auth-bg-panel {
+  position: absolute;
+  display: grid;
+  gap: 10px;
+  width: 230px;
+  border: 1px solid rgba(35, 47, 72, 0.08);
+  border-radius: 22px;
+  padding: 16px;
+  color: #172033;
+  background: rgba(255, 255, 255, 0.54);
+  box-shadow: 0 24px 60px rgba(44, 57, 82, 0.10);
+  backdrop-filter: blur(10px);
+}
+
+.auth-bg-panel div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-bg-panel strong {
+  font-size: 14px;
+}
+
+.auth-bg-panel span,
+.auth-bg-panel p {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.auth-bg-panel p {
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.auth-bg-panel-queue {
+  left: max(22px, calc((100vw - 1200px) / 2 - 54px));
+  bottom: 10%;
+  transform: rotate(-4deg);
+}
+
+.auth-bg-panel-mastery {
+  right: max(24px, calc((100vw - 1200px) / 2 - 62px));
+  top: 12%;
+  transform: rotate(5deg);
+}
+
+.auth-bg-panel-review {
+  right: max(34px, calc((100vw - 1200px) / 2 + 42px));
+  bottom: 8%;
+  transform: rotate(-3deg);
+}
+
+.auth-bg-progress {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(0, 122, 255, 0.11);
+  overflow: hidden;
+}
+
+.auth-bg-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #007aff, #34c759);
 }
 
 .auth-page-content {
@@ -2393,6 +2473,10 @@ button.summary-chip:focus-visible {
   }
 
   .auth-screen::after {
+    display: none;
+  }
+
+  .auth-background-panels {
     display: none;
   }
 
