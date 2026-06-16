@@ -2285,14 +2285,30 @@ function AuthPage({
             </div>
             <div>
               <strong>AI 智能备考复习平台</strong>
-              <span>注册、登录后进入资料解析、AI 问答、出题、自测、错题和复习计划闭环。</span>
+              <span>上传资料后自动解析与提炼知识点，围绕目标完成问答、出题、自测、错题复习和计划追踪。</span>
             </div>
           </div>
           <div className="hero-phone">
             <div className="phone-island" />
-            <div className="mini-card blue">上传 TXT 资料</div>
-            <div className="mini-card green">解析后启用 AI 学习</div>
-            <div className="mini-card">沉淀错题并生成复习计划</div>
+            <div className="mini-card blue">
+              <strong>资料自动入库</strong>
+              <span>支持 TXT、PDF 和图片资料，上传后自动解析并进入学习流程。</span>
+            </div>
+            <div className="mini-card green">
+              <strong>知识驱动学习</strong>
+              <span>基于资料生成知识提炼、知识图谱、AI 问答和针对性出题。</span>
+            </div>
+            <div className="mini-card">
+              <strong>复习闭环追踪</strong>
+              <span>自测后沉淀错题，按掌握状态复习，并生成可勾选的复习计划。</span>
+            </div>
+            <div className="auth-flow-line" aria-label="学习流程">
+              <span>上传资料</span>
+              <span>知识图谱</span>
+              <span>问答出题</span>
+              <span>错题复习</span>
+              <span>计划完成</span>
+            </div>
           </div>
         </section>
 
