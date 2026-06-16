@@ -759,7 +759,7 @@ class TestWrongQuestionBoundaryCase:
 class TestReviewPlanBoundaryCase:
     """复习计划模块边界条件测试。"""
 
-    async def _create_one_day_plan_task(self, client, token: str) -> int:
+    async def _create_one_day_plan(self, client, token: str) -> dict:
         target_id = await _create_target(client, token)
         today = str(date.today())
         resp = await client.post(
@@ -774,7 +774,15 @@ class TestReviewPlanBoundaryCase:
         assert resp.status_code == 200
         body = resp.json()
         assert body["code"] == 0
-        return body["data"]["tasks"][0]["id"]
+        return {
+            "target_id": target_id,
+            "plan_id": body["data"]["id"],
+            "task_id": body["data"]["tasks"][0]["id"],
+        }
+
+    async def _create_one_day_plan_task(self, client, token: str) -> int:
+        plan = await self._create_one_day_plan(client, token)
+        return plan["task_id"]
 
     async def test_generate_plan_end_before_start(self, client):
         """end_date 早于 start_date 应被拒绝。"""
@@ -882,6 +890,66 @@ class TestReviewPlanBoundaryCase:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 422
+
+    async def test_deleted_target_hides_review_plan_everywhere(self, client):
+        """删除目标后，该目标下复习计划不应再从普通入口可见或可操作。"""
+        token, _ = await _register_and_login(client)
+        plan = await self._create_one_day_plan(client, token)
+
+        second_target_id = await _create_target(client, token, "Still Active Target")
+        today = str(date.today())
+        resp = await client.post(
+            "/review-plans/generate",
+            json={
+                "target_id": second_target_id,
+                "start_date": today,
+                "end_date": today,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        active_plan_id = resp.json()["data"]["id"]
+
+        resp = await client.delete(
+            f"/study-targets/{plan['target_id']}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 0
+
+        resp = await client.get(
+            "/review-plans",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 0
+        plan_ids = {item["id"] for item in body["data"]["items"]}
+        assert plan["plan_id"] not in plan_ids
+        assert active_plan_id in plan_ids
+
+        resp = await client.get(
+            f"/review-plans?target_id={plan['target_id']}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 0
+        assert body["data"]["total"] == 0
+        assert body["data"]["items"] == []
+
+        resp = await client.patch(
+            f"/review-plans/tasks/{plan['task_id']}",
+            json={"completed": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 404
+
+        resp = await client.get(
+            f"/exports/review-plan/{plan['plan_id']}.md",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 404
 
     async def test_list_plans_pagination_boundary(self, client):
         """复习计划分页边界。"""
