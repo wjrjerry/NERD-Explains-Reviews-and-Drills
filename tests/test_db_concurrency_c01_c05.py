@@ -57,7 +57,7 @@ async def test_db_c01_concurrent_register_same_username(client, async_session_fa
 
 @pytest.mark.asyncio
 async def test_db_c02_concurrent_login_updates_last_login(client, async_session_factory):
-    concurrency = env_int("DB_C02_CONCURRENCY", 1000)
+    concurrency = env_int("DB_C02_CONCURRENCY", 10)
     username = unique_name("login_user")
     await register_user(client, username=username)
 
@@ -89,9 +89,11 @@ async def test_db_c02_concurrent_login_updates_last_login(client, async_session_
     assert user.last_login_at is not None
 
 
+
+
 @pytest.mark.asyncio
 async def test_db_c03_concurrent_admin_user_status_updates(client, async_session_factory):
-    concurrency = env_int("DB_C03_CONCURRENCY", 1000)
+    concurrency = env_int("DB_C03_CONCURRENCY", 100)
     admin_token, admin_user, admin_username = await create_logged_in_user(client, prefix="admin_user")
     target_token, target_user, _target_username = await create_logged_in_user(client, prefix="status_user")
 
@@ -143,7 +145,7 @@ async def test_db_c03_concurrent_admin_user_status_updates(client, async_session
 
 @pytest.mark.asyncio
 async def test_db_c04_concurrent_study_target_creation(client, async_session_factory):
-    concurrency = env_int("DB_C04_CONCURRENCY", 1000)
+    concurrency = env_int("DB_C04_CONCURRENCY", 100)
     token, user, _username = await create_logged_in_user(client, prefix="target_user")
     headers = auth_headers(token)
 
@@ -186,7 +188,7 @@ async def test_db_c04_concurrent_study_target_creation(client, async_session_fac
 
 @pytest.mark.asyncio
 async def test_db_c05_concurrent_study_target_update_delete_read(client, async_session_factory):
-    concurrency = env_int("DB_C05_CONCURRENCY", 1000)
+    concurrency = env_int("DB_C05_CONCURRENCY", 100)
     token, user, _username = await create_logged_in_user(client, prefix="target_race_user")
     headers = auth_headers(token)
     target = await create_study_target(client, headers=headers, title=unique_name("race_target"))

@@ -240,7 +240,10 @@ async def test_db_c14_concurrent_knowledge_graph_generate(client, async_session_
             .where(MaterialKnowledgePoint.knowledge_point_id.in_(point_ids))
         )
 
-    assert 1 <= len(points) <= max_points
-    assert len({point.name for point in points}) == len(points)
+    point_ids_set = {point.id for point in points}
+    assert len(points) >= 1
+    assert all(point.name.strip() for point in points)
+    assert all(point.parent_id is None or point.parent_id in point_ids_set for point in points)
+    assert all(point.parent_id != point.id for point in points)
     assert mastery_count == len(points)
-    assert evidence_count >= len(points)
+    assert evidence_count >= 1

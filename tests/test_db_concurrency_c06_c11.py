@@ -86,7 +86,7 @@ async def test_db_c06_concurrent_material_uploads_create_parse_tasks(
     monkeypatch,
 ):
     _disable_parse_queue(monkeypatch)
-    concurrency = env_int("DB_C06_CONCURRENCY", 1000)
+    concurrency = env_int("DB_C06_CONCURRENCY", 100)
     token, _user, _username = await create_logged_in_user(client, prefix="material_user")
     headers = auth_headers(token)
     target = await create_study_target(client, headers=headers, title=unique_name("upload_target"))
@@ -151,7 +151,7 @@ async def test_db_c06_concurrent_material_uploads_create_parse_tasks(
 @pytest.mark.asyncio
 async def test_db_c07_concurrent_reparse_same_material(client, async_session_factory, monkeypatch):
     _disable_parse_queue(monkeypatch)
-    concurrency = env_int("DB_C07_CONCURRENCY", 1000)
+    concurrency = env_int("DB_C07_CONCURRENCY", 100)
     token, _user, _username = await create_logged_in_user(client, prefix="reparse_user")
     headers = auth_headers(token)
     target = await create_study_target(client, headers=headers, title=unique_name("reparse_target"))
@@ -195,7 +195,7 @@ async def test_db_c07_concurrent_reparse_same_material(client, async_session_fac
 
 @pytest.mark.asyncio
 async def test_db_c08_concurrent_material_delete_and_reads(client, async_session_factory):
-    concurrency = env_int("DB_C08_CONCURRENCY", 10)
+    concurrency = env_int("DB_C08_CONCURRENCY", 100)
     token, _user, _username = await create_logged_in_user(client, prefix="delete_material_user")
     headers = auth_headers(token)
     target = await create_study_target(client, headers=headers, title=unique_name("delete_material_target"))
@@ -232,7 +232,7 @@ async def test_db_c08_concurrent_material_delete_and_reads(client, async_session
 
 @pytest.mark.asyncio
 async def test_db_c09_concurrent_parse_task_status_transitions(client, async_session_factory):
-    concurrency = env_int("DB_C09_CONCURRENCY", 12)
+    concurrency = env_int("DB_C09_CONCURRENCY", 120)
     token, _user, _username = await create_logged_in_user(client, prefix="parse_status_user")
     headers = auth_headers(token)
     target = await create_study_target(client, headers=headers, title=unique_name("parse_status_target"))
@@ -281,7 +281,7 @@ async def test_db_c09_concurrent_parse_task_status_transitions(client, async_ses
 
 @pytest.mark.asyncio
 async def test_db_c10_concurrent_material_structure_replace(client, async_session_factory):
-    concurrency = env_int("DB_C10_CONCURRENCY", 5)
+    concurrency = env_int("DB_C10_CONCURRENCY", 1000)
     token, _user, _username = await create_logged_in_user(client, prefix="structure_user")
     headers = auth_headers(token)
     target = await create_study_target(client, headers=headers, title=unique_name("structure_target"))
@@ -307,8 +307,8 @@ async def test_db_c10_concurrent_material_structure_replace(client, async_sessio
 
 @pytest.mark.asyncio
 async def test_db_c11_material_structure_read_while_replace(client, async_session_factory):
-    writer_count = env_int("DB_C11_WRITERS", 3)
-    reader_count = env_int("DB_C11_READERS", 10)
+    writer_count = env_int("DB_C11_WRITERS", 30)
+    reader_count = env_int("DB_C11_READERS", 100)
     concurrency = writer_count + reader_count
     token, _user, _username = await create_logged_in_user(client, prefix="structure_rw_user")
     headers = auth_headers(token)
