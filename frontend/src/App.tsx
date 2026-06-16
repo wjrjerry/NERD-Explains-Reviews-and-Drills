@@ -84,7 +84,12 @@ type Notice = {
 
 type LoginRole = "student" | "admin";
 
-type AiPendingAction = "qa" | "questions" | "test" | "plan" | null;
+type AiPendingActions = {
+  qa: boolean;
+  questions: boolean;
+  test: boolean;
+  plan: boolean;
+};
 
 type MaterialSourcePreview = {
   materialId: number;
@@ -132,6 +137,12 @@ const parsePollMaxAttempts = 30;
 const parsePollIntervalMs = 2500;
 const knowledgeJobPollMaxAttempts = 45;
 const knowledgeJobPollIntervalMs = 2000;
+const initialAiPendingActions: AiPendingActions = {
+  qa: false,
+  questions: false,
+  test: false,
+  plan: false
+};
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -171,6 +182,8 @@ function App() {
   const [targets, setTargets] = useState<StudyTarget[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [qaRecords, setQaRecords] = useState<QaRecord[]>([]);
+  const [qaHistoryLoading, setQaHistoryLoading] = useState(false);
+  const [qaHistoryError, setQaHistoryError] = useState<string | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [wrongQuestions, setWrongQuestions] = useState<WrongQuestion[]>([]);
@@ -198,7 +211,7 @@ function App() {
   const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
   const [questionBatchContext, setQuestionBatchContext] = useState<QuestionBatchContext | null>(null);
   const [knowledgeRefreshing, setKnowledgeRefreshing] = useState(false);
-  const [aiPendingAction, setAiPendingAction] = useState<AiPendingAction>(null);
+  const [aiPendingActions, setAiPendingActions] = useState<AiPendingActions>(initialAiPendingActions);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const parsePollAttemptsRef = useRef<Map<number, number>>(new Map());
@@ -333,6 +346,13 @@ function App() {
       setTargetKnowledge(extractionData);
     });
   }, [selectedTargetId, user]);
+
+  useEffect(() => {
+    if (view !== "qa" || !user) {
+      return;
+    }
+    void loadQaHistoryForCurrentContext();
+  }, [view, selectedMaterialId, selectedTargetId, user]);
 
   useEffect(() => {
     if (view !== "graph" || !selectedMaterialId || !user) {
@@ -487,6 +507,32 @@ function App() {
     setAiUsageLogs(logs.items);
   }
 
+  async function loadQaHistoryForCurrentContext(context?: { materialId?: number | null; targetId?: number | null }) {
+    const materialId = context?.materialId !== undefined ? context.materialId : selectedMaterialId;
+    const targetId = context?.targetId !== undefined ? context.targetId : selectedTargetId;
+
+    if (!materialId && !targetId) {
+      setQaRecords([]);
+      setQaHistoryError(null);
+      setQaHistoryLoading(false);
+      return;
+    }
+
+    setQaHistoryLoading(true);
+    setQaHistoryError(null);
+    try {
+      const data = materialId
+        ? await api.listQaHistory(1, 10, materialId)
+        : await api.listQaHistory(1, 10, undefined, targetId ?? undefined);
+      setQaRecords(data.items);
+    } catch (error) {
+      setQaRecords([]);
+      setQaHistoryError(readMessage(error));
+    } finally {
+      setQaHistoryLoading(false);
+    }
+  }
+
   async function loadAdminHealth() {
     const [apiStatus, dbStatus, redisStatus] = await Promise.allSettled([api.health(), api.healthDb(), api.healthRedis()]);
     setHealth({
@@ -498,12 +544,11 @@ function App() {
 
   async function loadMaterialContext(materialId: number) {
     try {
-      const [detailData, previewData, sourceFileBlob, structuredData, qaHistoryData, extractionData] = await Promise.all([
+      const [detailData, previewData, sourceFileBlob, structuredData, extractionData] = await Promise.all([
         api.getMaterial(materialId),
         api.getMaterialPreview(materialId).catch(() => null),
         api.getMaterialFile(materialId).catch(() => null),
         api.getMaterialStructured(materialId).catch(() => null),
-        api.listQaHistory(1, 10, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
         api.getLatestKnowledge({ materialId }).catch(() => null)
       ]);
 
@@ -522,29 +567,36 @@ function App() {
         setSourcePreview(null);
       }
       setStructured(structuredData);
-      setQaRecords(qaHistoryData.items);
       setKnowledge(extractionData);
+      await loadQaHistoryForCurrentContext({
+        materialId,
+        targetId: detailData.material.target_id
+      });
     } catch (error) {
       setPreview(null);
       setSourcePreview(null);
       setStructured(null);
       setQaRecords([]);
+      setQaHistoryError(null);
+      setQaHistoryLoading(false);
       setNotice({ tone: "danger", text: `资料上下文加载失败：${readMessage(error)}` });
     }
   }
 
   async function refreshMaterialLearningContext(material: Material) {
     if (selectedMaterialId === material.id) {
-      const [previewData, structuredData, qaHistoryData, materialExtraction] = await Promise.all([
+      const [previewData, structuredData, materialExtraction] = await Promise.all([
         api.getMaterialPreview(material.id).catch(() => null),
         api.getMaterialStructured(material.id).catch(() => null),
-        api.listQaHistory(1, 10, material.id).catch(() => ({ items: [], total: 0, page: 1, page_size: 10 })),
         api.getLatestKnowledge({ materialId: material.id }).catch(() => null)
       ]);
       setPreview(previewData);
       setStructured(structuredData);
-      setQaRecords(qaHistoryData.items);
       setKnowledge(materialExtraction);
+      void loadQaHistoryForCurrentContext({
+        materialId: material.id,
+        targetId: material.target_id
+      });
     }
 
     const [graphData, extractionData] = await Promise.all([
@@ -893,7 +945,7 @@ function App() {
     if (!question) {
       return;
     }
-    if (aiPendingAction) {
+    if (aiPendingActions.qa) {
       return;
     }
 
@@ -906,25 +958,33 @@ function App() {
       return;
     }
 
-    setAiPendingAction("qa");
+    setAiPendingActions((current) => ({ ...current, qa: true }));
     try {
       const data = await api.askQuestion(
         scope === "material"
           ? { materialId: selectedMaterial?.id, question }
           : { targetId: selectedTargetId ?? undefined, knowledgePointIds, question }
       );
-      setQaRecords((current) => [data, ...current]);
+      await loadQaHistoryForCurrentContext({
+        materialId: selectedMaterialId,
+        targetId: selectedTargetId
+      });
+      setQaRecords((current) =>
+        current.some((record) => record.qa_record_id === data.qa_record_id)
+          ? current
+          : [data, ...current]
+      );
       setNotice({ tone: "success", text: "问答已生成并写入历史。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `问答失败：${readMessage(error)}` });
     } finally {
-      setAiPendingAction((current) => (current === "qa" ? null : current));
+      setAiPendingActions((current) => ({ ...current, qa: false }));
     }
   }
 
   async function handleGenerateQuestions(formData: FormData) {
     const scope = String(formData.get("question_scope") ?? "target");
-    if (aiPendingAction) {
+    if (aiPendingActions.questions || aiPendingActions.test) {
       return;
     }
     try {
@@ -946,7 +1006,7 @@ function App() {
         return;
       }
 
-      setAiPendingAction("questions");
+      setAiPendingActions((current) => ({ ...current, questions: true }));
       setQuestionBatchContext(null);
       const data = await api.generateQuestions({
         materialId: scope === "material" ? selectedMaterial?.id : undefined,
@@ -975,7 +1035,7 @@ function App() {
     } catch (error) {
       setNotice({ tone: "danger", text: `题目生成失败：${readMessage(error)}` });
     } finally {
-      setAiPendingAction((current) => (current === "questions" ? null : current));
+      setAiPendingActions((current) => ({ ...current, questions: false }));
     }
   }
 
@@ -984,10 +1044,10 @@ function App() {
       setNotice({ tone: "danger", text: "请先生成题目，再提交自测。" });
       return;
     }
-    if (aiPendingAction) {
+    if (aiPendingActions.questions || aiPendingActions.test) {
       return;
     }
-    setAiPendingAction("test");
+    setAiPendingActions((current) => ({ ...current, test: true }));
     try {
       const data = await api.submitTest(questionBatchContext.materialId, questionBatchContext.targetId, answers);
       setTestResult(data);
@@ -1006,7 +1066,7 @@ function App() {
     } catch (error) {
       setNotice({ tone: "danger", text: `自测提交失败：${readMessage(error)}` });
     } finally {
-      setAiPendingAction((current) => (current === "test" ? null : current));
+      setAiPendingActions((current) => ({ ...current, test: false }));
     }
   }
 
@@ -1024,10 +1084,10 @@ function App() {
     const targetId = Number(formData.get("target_id"));
     const startDate = normalizeDateInput(formData.get("start_date")) ?? "";
     const endDate = normalizeDateInput(formData.get("end_date")) ?? "";
-    if (aiPendingAction) {
+    if (aiPendingActions.plan) {
       return;
     }
-    setAiPendingAction("plan");
+    setAiPendingActions((current) => ({ ...current, plan: true }));
     try {
       const plan = await api.generateReviewPlan(targetId, startDate, endDate);
       setReviewPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)]);
@@ -1036,7 +1096,7 @@ function App() {
     } catch (error) {
       setNotice({ tone: "danger", text: `复习计划生成失败：${readMessage(error)}` });
     } finally {
-      setAiPendingAction((current) => (current === "plan" ? null : current));
+      setAiPendingActions((current) => ({ ...current, plan: false }));
     }
   }
 
@@ -1145,6 +1205,8 @@ function App() {
     setTargets([]);
     setMaterials([]);
     setQaRecords([]);
+    setQaHistoryLoading(false);
+    setQaHistoryError(null);
     setQuestions([]);
     setTestResult(null);
     setWrongQuestions([]);
@@ -1157,6 +1219,7 @@ function App() {
     setPreview(null);
     setAiUsageSummary(null);
     setAiUsageLogs([]);
+    setAiPendingActions(initialAiPendingActions);
     setSourcePreview(null);
     setHealth({});
     setAdminSummary(null);
@@ -1371,7 +1434,9 @@ function App() {
             knowledgePoints={knowledgeGraph?.nodes ?? []}
             focusedKnowledgePoints={focusedKnowledgePoints}
             records={qaRecords}
-            isAsking={aiPendingAction === "qa"}
+            loading={qaHistoryLoading}
+            error={qaHistoryError}
+            isAsking={aiPendingActions.qa}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onSelectFocusPoint={(pointId) =>
@@ -1397,8 +1462,8 @@ function App() {
             focusedKnowledgePoints={focusedKnowledgePoints}
             questions={questions}
             questionBatchContext={questionBatchContext}
-            isGenerating={aiPendingAction === "questions"}
-            isSubmitting={aiPendingAction === "test"}
+            isGenerating={aiPendingActions.questions}
+            isSubmitting={aiPendingActions.test}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onGenerate={handleGenerateQuestions}
@@ -1428,7 +1493,7 @@ function App() {
           <ReviewPlansPage
             targets={targets}
             plans={reviewPlans}
-            isGenerating={aiPendingAction === "plan"}
+            isGenerating={aiPendingActions.plan}
             onGenerate={handleGenerateReviewPlan}
             onExport={(planId) => void handleExport(() => api.exportReviewPlan(planId), "复习计划已开始下载。")}
           />
@@ -2662,6 +2727,8 @@ function QaPage({
   knowledgePoints,
   focusedKnowledgePoints,
   records,
+  loading,
+  error,
   isAsking,
   onSelectTarget,
   onSelectMaterial,
@@ -2678,6 +2745,8 @@ function QaPage({
   knowledgePoints: KnowledgePointReference[];
   focusedKnowledgePoints: KnowledgePointReference[];
   records: QaRecord[];
+  loading: boolean;
+  error: string | null;
   isAsking: boolean;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
@@ -2751,18 +2820,25 @@ function QaPage({
       <section className="panel">
         <PanelTitle icon={Bot} title="问答历史" />
         <div className="chat-list">
-          {records.map((record) => (
-            <article className="chat-card" key={record.qa_record_id}>
-              <strong>{record.question}</strong>
-              <p>{record.answer}</p>
-              {record.knowledge_points?.length ? (
-                <div className="tag-cloud">
-                  {record.knowledge_points.map((point) => <span key={point.id}>{point.name}</span>)}
-                </div>
-              ) : null}
-              {record.references.length ? <blockquote>{record.references[0].snippet}</blockquote> : null}
-            </article>
-          ))}
+          {loading ? <p className="muted-text">正在加载问答历史...</p> : null}
+          {error ? <p className="danger-text">问答历史加载失败：{error}</p> : null}
+          {!loading && !error && records.length === 0 ? (
+            <p className="muted-text">当前上下文还没有问答历史。</p>
+          ) : null}
+          {!loading && !error
+            ? records.map((record) => (
+                <article className="chat-card" key={record.qa_record_id}>
+                  <strong>{record.question}</strong>
+                  <p>{record.answer}</p>
+                  {record.knowledge_points?.length ? (
+                    <div className="tag-cloud">
+                      {record.knowledge_points.map((point) => <span key={point.id}>{point.name}</span>)}
+                    </div>
+                  ) : null}
+                  {record.references.length ? <blockquote>{record.references[0].snippet}</blockquote> : null}
+                </article>
+              ))
+            : null}
         </div>
       </section>
       </div>
