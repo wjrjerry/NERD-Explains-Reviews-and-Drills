@@ -40,6 +40,7 @@ import type {
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgeGraphNode,
   KnowledgeJob,
   KnowledgeMasteryStatus,
   KnowledgePointMaterialItem,
@@ -2450,6 +2451,28 @@ function reviewTaskTimingLabel(date: string) {
   return "待完成";
 }
 
+function getGraphDisplayLevel(level: number, minLevel: number) {
+  return Math.max(1, level - minLevel + 1);
+}
+
+function getGraphNodeCaption(
+  node: KnowledgeGraphNode,
+  parent: KnowledgeGraphNode | null,
+  displayLevel: number,
+  isDirectlyLinked: boolean
+) {
+  if (parent) {
+    return `属于 ${parent.name}`;
+  }
+  if (!isDirectlyLinked) {
+    return "上级节点";
+  }
+  if (node.parent_id) {
+    return "当前范围知识点";
+  }
+  return displayLevel === 1 ? "顶层知识点" : "当前范围知识点";
+}
+
 function handleKeyboardClick(event: KeyboardEvent, callback: () => void) {
   if (
     event.target instanceof HTMLElement
@@ -3162,6 +3185,7 @@ function KnowledgeGraphPage({
   const graphLevels = Array.from(
     new Set(graphNodes.map((node) => node.level))
   ).sort((left, right) => left - right);
+  const graphMinLevel = graphLevels[0] ?? 1;
   const filteredDetailMaterials = selectedMaterialId
     ? detail.materials.filter((item) => item.material_id === selectedMaterialId)
     : detail.materials;
@@ -3264,13 +3288,14 @@ function KnowledgeGraphPage({
         {graphNodes.length ? (
           <div className="graph-canvas">
             {graphLevels.map((level) => {
+              const displayLevel = getGraphDisplayLevel(level, graphMinLevel);
               const levelNodes = graphNodes
                 .filter((node) => node.level === level)
                 .sort((left, right) => left.sort_order - right.sort_order);
               return (
                 <section className="graph-level" key={level}>
                   <div className="graph-level-heading">
-                    <strong>{level === 1 ? "核心知识" : `第 ${level} 层知识`}</strong>
+                    <strong>{displayLevel === 1 ? "核心知识" : `第 ${displayLevel} 层知识`}</strong>
                     <span>{levelNodes.length} 个知识点</span>
                   </div>
                   <div className="graph-level-nodes">
@@ -3292,7 +3317,7 @@ function KnowledgeGraphPage({
                         >
                           <strong>{node.name}</strong>
                           <span>重要度 {Math.round(node.importance_weight * 100)}%</span>
-                          <small>{directlyLinkedNodeIds.has(node.id) ? (parent ? `属于 ${parent.name}` : "核心节点") : "上级节点"}</small>
+                          <small>{getGraphNodeCaption(node, parent ?? null, displayLevel, directlyLinkedNodeIds.has(node.id))}</small>
                         </button>
                       );
                     })}
