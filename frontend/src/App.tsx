@@ -3543,9 +3543,13 @@ function ResultsPage({
         <div className="list">
           {result.results.map((item) => {
             const question = questions.find((entry) => entry.id === item.question_id);
+            const tone = getResultTone(item);
             return (
-              <article className="list-item vertical" key={item.question_id}>
-                <strong>{question?.stem ?? `题目 ${item.question_id}`}</strong>
+              <article className={`list-item vertical result-item ${tone}`} key={item.question_id}>
+                <div className="result-item-head">
+                  <strong>{question?.stem ?? `题目 ${item.question_id}`}</strong>
+                  <span className={`result-status ${tone}`}>{resultToneLabel(tone)}</span>
+                </div>
                 <span>
                   你的答案：{formatAnswer(item.user_answer)} · 正确答案：{formatAnswer(item.correct_answer)} · 单题得分：{item.score}
                 </span>
@@ -3874,8 +3878,13 @@ function WrongQuestionsPage({
                 <button type="button" disabled={reviewIndex >= reviewQueue.length - 1} onClick={onNextReview}>下一题</button>
               </div>
               {redoResult ? (
-                <div className="solution-box">
-                  <strong>本次得分：{Math.round(redoResult.score * 100)}%</strong>
+                <div className={`solution-box ${getResultTone(redoResult)}`}>
+                  <div className="result-item-head">
+                    <strong>本次得分：{Math.round(redoResult.score * 100)}%</strong>
+                    <span className={`result-status ${getResultTone(redoResult)}`}>
+                      {resultToneLabel(getResultTone(redoResult))}
+                    </span>
+                  </div>
                   <p>你的答案：{formatAnswer(redoResult.user_answer)} · 正确答案：{formatAnswer(redoResult.correct_answer)}</p>
                   <p>{redoResult.analysis}</p>
                   {redoResult.missing_points.length ? <InfoList title="缺失要点" items={redoResult.missing_points} /> : null}
@@ -4203,6 +4212,27 @@ function formatDateZh(value: string | null | undefined, fallback = "未设置日
 
 function formatAnswer(values: string[]) {
   return values.length ? values.join(", ") : "未作答";
+}
+
+type ResultTone = "success" | "partial" | "danger";
+
+function getResultTone(result: Pick<TestResultItem, "is_correct" | "score">): ResultTone {
+  if (result.is_correct || result.score >= 0.6) {
+    return "success";
+  }
+  if (result.score > 0) {
+    return "partial";
+  }
+  return "danger";
+}
+
+function resultToneLabel(tone: ResultTone) {
+  const labels: Record<ResultTone, string> = {
+    success: "已正确",
+    partial: "部分正确",
+    danger: "需复习"
+  };
+  return labels[tone];
 }
 
 function formatDateTimeZh(value: string | null | undefined, fallback = "未复习") {

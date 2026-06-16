@@ -1304,10 +1304,25 @@ blockquote {
 .solution-box {
   display: grid;
   gap: 8px;
-  border: 1px solid rgba(52, 199, 89, 0.18);
+  border: 1px solid rgba(0, 122, 255, 0.16);
   border-radius: 14px;
   padding: 12px;
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.solution-box.success {
+  border-color: rgba(52, 199, 89, 0.24);
   background: rgba(52, 199, 89, 0.08);
+}
+
+.solution-box.partial {
+  border-color: rgba(255, 159, 10, 0.28);
+  background: rgba(255, 159, 10, 0.1);
+}
+
+.solution-box.danger {
+  border-color: rgba(255, 59, 48, 0.24);
+  background: rgba(255, 59, 48, 0.08);
 }
 
 .solution-box p {
@@ -1320,6 +1335,59 @@ blockquote {
 .solution-options {
   display: grid;
   gap: 6px;
+}
+
+.result-item {
+  border-left: 4px solid rgba(0, 122, 255, 0.24);
+}
+
+.result-item.success {
+  border-left-color: #34c759;
+}
+
+.result-item.partial {
+  border-left-color: #ff9f0a;
+}
+
+.result-item.danger {
+  border-left-color: #ff3b30;
+}
+
+.result-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.result-item-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.result-status {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.result-status.success {
+  color: #1f8f43;
+  background: rgba(52, 199, 89, 0.16);
+}
+
+.result-status.partial {
+  color: #a26000;
+  background: rgba(255, 159, 10, 0.18);
+}
+
+.result-status.danger {
+  color: #b42318;
+  background: rgba(255, 59, 48, 0.14);
 }
 
 .toolbar-fields {
