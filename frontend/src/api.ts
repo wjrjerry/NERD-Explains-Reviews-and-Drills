@@ -23,6 +23,7 @@ import type {
   QuestionType,
   Question,
   ReviewPlan,
+  ReviewPlanTask,
   StudyTarget,
   TestRecord,
   TestSubmitAnswer,
@@ -418,6 +419,11 @@ export const api = {
     }),
   listReviewPlans: (page = 1, pageSize = 20, targetId?: number) =>
     request<Pagination<ReviewPlan>>(`/review-plans?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}`),
+  updateReviewPlanTask: (taskId: number, completed: boolean) =>
+    request<ReviewPlanTask>(`/review-plans/tasks/${taskId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ completed })
+    }),
 
   getAiUsageSummary: (targetId?: number, materialId?: number) =>
     request<AiUsageSummary>(`/ai-usage/summary${buildQuery({ target_id: targetId, material_id: materialId })}`),

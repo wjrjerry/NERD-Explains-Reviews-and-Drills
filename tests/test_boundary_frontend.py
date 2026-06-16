@@ -759,6 +759,23 @@ class TestWrongQuestionBoundaryCase:
 class TestReviewPlanBoundaryCase:
     """复习计划模块边界条件测试。"""
 
+    async def _create_one_day_plan_task(self, client, token: str) -> int:
+        target_id = await _create_target(client, token)
+        today = str(date.today())
+        resp = await client.post(
+            "/review-plans/generate",
+            json={
+                "target_id": target_id,
+                "start_date": today,
+                "end_date": today,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 0
+        return body["data"]["tasks"][0]["id"]
+
     async def test_generate_plan_end_before_start(self, client):
         """end_date 早于 start_date 应被拒绝。"""
         token, _ = await _register_and_login(client)
@@ -813,6 +830,58 @@ class TestReviewPlanBoundaryCase:
             assert body["code"] != 0
         else:
             assert resp.status_code in (400, 403, 404)
+
+    async def test_update_plan_task_completed_and_pending(self, client):
+        """用户可标记自己的复习任务完成，也可取消完成。"""
+        token, _ = await _register_and_login(client)
+        task_id = await self._create_one_day_plan_task(client, token)
+
+        resp = await client.patch(
+            f"/review-plans/tasks/{task_id}",
+            json={"completed": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 0
+        assert body["data"]["id"] == task_id
+        assert body["data"]["completed"] is True
+
+        resp = await client.patch(
+            f"/review-plans/tasks/{task_id}",
+            json={"completed": False},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 0
+        assert body["data"]["id"] == task_id
+        assert body["data"]["completed"] is False
+
+    async def test_update_plan_task_cross_user_rejected(self, client):
+        """用户不能更新他人的复习任务。"""
+        token_a, _ = await _register_and_login(client)
+        task_id = await self._create_one_day_plan_task(client, token_a)
+        token_b, _ = await _register_and_login(client)
+
+        resp = await client.patch(
+            f"/review-plans/tasks/{task_id}",
+            json={"completed": True},
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert resp.status_code == 404
+
+    async def test_update_plan_task_missing_completed_field(self, client):
+        """缺少 completed 字段应被拒绝。"""
+        token, _ = await _register_and_login(client)
+        task_id = await self._create_one_day_plan_task(client, token)
+
+        resp = await client.patch(
+            f"/review-plans/tasks/{task_id}",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 422
 
     async def test_list_plans_pagination_boundary(self, client):
         """复习计划分页边界。"""

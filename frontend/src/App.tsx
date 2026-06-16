@@ -54,6 +54,7 @@ import type {
   QuestionSolution,
   QuestionType,
   ReviewPlan,
+  ReviewPlanTask,
   StudyTarget,
   TestRecord,
   TestResultItem,
@@ -215,6 +216,7 @@ function App() {
   const [wrongRedoSubmitting, setWrongRedoSubmitting] = useState(false);
   const [wrongRedoResult, setWrongRedoResult] = useState<TestResultItem | null>(null);
   const [reviewPlans, setReviewPlans] = useState<ReviewPlan[]>([]);
+  const [updatingReviewPlanTaskIds, setUpdatingReviewPlanTaskIds] = useState<Set<number>>(() => new Set());
   const [questionExplainAnswers, setQuestionExplainAnswers] = useState<Record<number, string>>({});
   const [questionExplainLoading, setQuestionExplainLoading] = useState<Record<number, boolean>>({});
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
@@ -1285,6 +1287,31 @@ function App() {
     }
   }
 
+  async function handleToggleReviewPlanTask(taskId: number, completed: boolean) {
+    if (updatingReviewPlanTaskIds.has(taskId)) {
+      return;
+    }
+    setUpdatingReviewPlanTaskIds((current) => new Set(current).add(taskId));
+    try {
+      const updated = await api.updateReviewPlanTask(taskId, completed);
+      setReviewPlans((current) =>
+        current.map((plan) => ({
+          ...plan,
+          tasks: plan.tasks.map((task) => (task.id === updated.id ? updated : task))
+        }))
+      );
+      setNotice({ tone: "success", text: completed ? "复习任务已标为完成。" : "复习任务已取消完成。" });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `复习任务状态更新失败：${readMessage(error)}` });
+    } finally {
+      setUpdatingReviewPlanTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  }
+
   async function handleGenerateKnowledgeGraph() {
     if (!selectedTargetId) {
       setNotice({ tone: "danger", text: "请先选择一个学习目标。" });
@@ -1404,6 +1431,7 @@ function App() {
     setWrongRedoSubmitting(false);
     setWrongRedoResult(null);
     setReviewPlans([]);
+    setUpdatingReviewPlanTaskIds(new Set());
     setQuestionExplainAnswers({});
     setQuestionExplainLoading({});
     setKnowledge(null);
@@ -1731,7 +1759,9 @@ function App() {
             targets={targets}
             plans={reviewPlans}
             isGenerating={aiPendingActions.plan}
+            updatingTaskIds={updatingReviewPlanTaskIds}
             onGenerate={handleGenerateReviewPlan}
+            onToggleTaskCompleted={(taskId, completed) => void handleToggleReviewPlanTask(taskId, completed)}
             onExport={(planId) => void handleExport(() => api.exportReviewPlan(planId), "复习计划已开始下载。")}
           />
         ) : null}
@@ -3914,13 +3944,17 @@ function ReviewPlansPage({
   targets,
   plans,
   isGenerating,
+  updatingTaskIds,
   onGenerate,
+  onToggleTaskCompleted,
   onExport
 }: {
   targets: StudyTarget[];
   plans: ReviewPlan[];
   isGenerating: boolean;
+  updatingTaskIds: Set<number>;
   onGenerate: (formData: FormData) => void;
+  onToggleTaskCompleted: (taskId: ReviewPlanTask["id"], completed: ReviewPlanTask["completed"]) => void;
   onExport: (planId: number) => void;
 }) {
   return (
@@ -3956,23 +3990,35 @@ function ReviewPlansPage({
                 <button onClick={() => onExport(plan.id)}><Download size={16} />导出 Markdown</button>
               </div>
               <div className="task-list">
-                {plan.tasks.map((task) => (
-                  <div className="task-row" key={task.id}>
-                    <CheckCircle2 size={18} />
-                    <div>
-                      <strong>{task.title}</strong>
-                      <span>{formatDateZh(task.date)} · {task.completed ? "已完成" : "待完成"}</span>
-                      {task.knowledge_point_id || task.material_id || task.wrong_question_id ? (
-                        <span>
-                          {task.knowledge_point_id ? `知识点 ${task.knowledge_point_id}` : ""}
-                          {task.material_id ? ` · 资料 ${task.material_id}` : ""}
-                          {task.wrong_question_id ? ` · 错题 ${task.wrong_question_id}` : ""}
-                        </span>
-                      ) : null}
-                      <p className="task-content">{task.content}</p>
+                {plan.tasks.map((task) => {
+                  const isUpdating = updatingTaskIds.has(task.id);
+                  return (
+                    <div className={`task-row ${task.completed ? "completed" : ""}`} key={task.id}>
+                      <CheckCircle2 size={18} />
+                      <div>
+                        <strong>{task.title}</strong>
+                        <span>{formatDateZh(task.date)} · {task.completed ? "已完成" : "待完成"}</span>
+                        {task.knowledge_point_id || task.material_id || task.wrong_question_id ? (
+                          <span>
+                            {task.knowledge_point_id ? `知识点 ${task.knowledge_point_id}` : ""}
+                            {task.material_id ? ` · 资料 ${task.material_id}` : ""}
+                            {task.wrong_question_id ? ` · 错题 ${task.wrong_question_id}` : ""}
+                          </span>
+                        ) : null}
+                        <p className="task-content">{task.content}</p>
+                      </div>
+                      <button
+                        className="ghost-button compact-button"
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={() => onToggleTaskCompleted(task.id, !task.completed)}
+                      >
+                        {isUpdating ? <LoaderCircle className="spin-icon" size={16} /> : <CheckCircle2 size={16} />}
+                        {isUpdating ? "更新中" : task.completed ? "取消完成" : "标为已完成"}
+                      </button>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </article>
           ))}

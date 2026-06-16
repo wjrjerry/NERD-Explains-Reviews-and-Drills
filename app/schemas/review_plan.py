@@ -9,6 +9,10 @@ class ReviewPlanGenerateRequest(BaseModel):
     end_date: date | None = Field(default=None, description="Plan end date.")
 
 
+class ReviewPlanTaskUpdateRequest(BaseModel):
+    completed: bool = Field(description="Whether this review task is completed.")
+
+
 class ReviewPlanTask(BaseModel):
     id: int
     date: date

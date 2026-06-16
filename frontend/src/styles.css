@@ -1550,8 +1550,27 @@ blockquote {
   border-radius: 16px;
 }
 
+.task-row > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.task-row > button {
+  flex: 0 0 auto;
+}
+
 .task-row svg {
   color: #34c759;
+}
+
+.task-row.completed {
+  border-color: rgba(52, 199, 89, 0.22);
+  background: rgba(52, 199, 89, 0.07);
+}
+
+.task-row.completed strong,
+.task-row.completed .task-content {
+  color: #6d7788;
 }
 
 .plan-card {

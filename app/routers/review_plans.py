@@ -5,7 +5,12 @@ from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
 from app.schemas.response import ApiResponse, PageResult
-from app.schemas.review_plan import ReviewPlanGenerateRequest, ReviewPlanResponse
+from app.schemas.review_plan import (
+    ReviewPlanGenerateRequest,
+    ReviewPlanResponse,
+    ReviewPlanTask,
+    ReviewPlanTaskUpdateRequest,
+)
 from app.services import review_plan_service
 from app.services.llm_service import LlmServiceError
 from app.utils.responses import page_result, success
@@ -42,6 +47,29 @@ async def generate_review_plan(
             detail=str(exc),
         ) from exc
 
+    return success(result)
+
+
+@router.patch("/tasks/{task_id}", response_model=ApiResponse[ReviewPlanTask])
+async def update_review_plan_task(
+    task_id: int,
+    payload: ReviewPlanTaskUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark one review plan task completed or pending."""
+    try:
+        result = await review_plan_service.update_review_plan_task(
+            db,
+            user_id=current_user.id,
+            task_id=task_id,
+            completed=payload.completed,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
     return success(result)
 
 

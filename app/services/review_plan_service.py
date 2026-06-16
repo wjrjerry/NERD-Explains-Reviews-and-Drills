@@ -25,6 +25,20 @@ from app.services import ai_service, ai_usage_service
 MAX_PLAN_DAYS = 60
 
 
+def _task_to_response(task) -> ReviewPlanTask:
+    """Map one ORM task row to the public API schema."""
+    return ReviewPlanTask(
+        id=task.id,
+        date=task.task_date,
+        title=task.title,
+        content=task.content,
+        material_id=task.material_id,
+        wrong_question_id=task.wrong_question_id,
+        knowledge_point_id=task.knowledge_point_id,
+        completed=task.completed,
+    )
+
+
 def _date_range(start: date, end: date) -> list[date]:
     """Return every date in the inclusive range."""
     return [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
@@ -55,19 +69,7 @@ def _to_response(plan: ReviewPlan) -> ReviewPlanResponse:
         start_date=plan.start_date,
         end_date=plan.end_date,
         summary=plan.summary,
-        tasks=[
-            ReviewPlanTask(
-                id=task.id,
-                date=task.task_date,
-                title=task.title,
-                content=task.content,
-                material_id=task.material_id,
-                wrong_question_id=task.wrong_question_id,
-                knowledge_point_id=task.knowledge_point_id,
-                completed=task.completed,
-            )
-            for task in plan.tasks
-        ],
+        tasks=[_task_to_response(task) for task in plan.tasks],
     )
 
 
@@ -431,3 +433,22 @@ async def list_review_plans(
         page_size=page_size,
     )
     return [_to_response(plan) for plan in plans], total
+
+
+async def update_review_plan_task(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    task_id: int,
+    completed: bool,
+) -> ReviewPlanTask:
+    """Update one review plan task completion flag."""
+    task = await ReviewPlanRepository.update_task_completed(
+        db,
+        user_id=user_id,
+        task_id=task_id,
+        completed=completed,
+    )
+    if task is None:
+        raise LookupError("Review plan task not found.")
+    return _task_to_response(task)

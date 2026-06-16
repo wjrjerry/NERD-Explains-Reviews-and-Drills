@@ -112,3 +112,29 @@ class ReviewPlanRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def update_task_completed(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        task_id: int,
+        completed: bool,
+    ) -> ReviewPlanTask | None:
+        """Update one task if it belongs to the user through its parent plan."""
+        result = await db.execute(
+            select(ReviewPlanTask)
+            .join(ReviewPlan, ReviewPlan.id == ReviewPlanTask.plan_id)
+            .where(
+                ReviewPlanTask.id == task_id,
+                ReviewPlan.user_id == user_id,
+            )
+        )
+        task = result.scalar_one_or_none()
+        if task is None:
+            return None
+
+        task.completed = completed
+        await db.commit()
+        await db.refresh(task)
+        return task
