@@ -56,6 +56,7 @@ import type {
   ReviewPlan,
   StudyTarget,
   TestRecord,
+  TestResultItem,
   TestSubmitAnswer,
   TestResult,
   User,
@@ -77,6 +78,15 @@ type View =
 type PracticeSubView = "questions" | "results";
 
 type FocusableScope = "target" | "knowledge_point" | "material";
+
+type WrongBookMode = "library" | "review";
+
+type WrongQuestionFilters = {
+  targetId: number | null;
+  materialId: number | null;
+  knowledgePointId: number | null;
+  masteryStatus: WrongQuestion["mastery_status"] | "";
+};
 
 type AdminView = "overview" | "users" | "materials" | "tasks" | "logs" | "health";
 
@@ -191,7 +201,22 @@ function App() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [wrongQuestions, setWrongQuestions] = useState<WrongQuestion[]>([]);
+  const [wrongQuestionFilters, setWrongQuestionFilters] = useState<WrongQuestionFilters>({
+    targetId: null,
+    materialId: null,
+    knowledgePointId: null,
+    masteryStatus: ""
+  });
+  const [wrongQuestionsLoading, setWrongQuestionsLoading] = useState(false);
+  const [wrongBookMode, setWrongBookMode] = useState<WrongBookMode>("library");
+  const [wrongReviewQueue, setWrongReviewQueue] = useState<WrongQuestion[]>([]);
+  const [wrongReviewIndex, setWrongReviewIndex] = useState(0);
+  const [wrongReviewLoading, setWrongReviewLoading] = useState(false);
+  const [wrongRedoSubmitting, setWrongRedoSubmitting] = useState(false);
+  const [wrongRedoResult, setWrongRedoResult] = useState<TestResultItem | null>(null);
   const [reviewPlans, setReviewPlans] = useState<ReviewPlan[]>([]);
+  const [questionExplainAnswers, setQuestionExplainAnswers] = useState<Record<number, string>>({});
+  const [questionExplainLoading, setQuestionExplainLoading] = useState<Record<number, boolean>>({});
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
   const [targetKnowledge, setTargetKnowledge] = useState<KnowledgeResult | null>(null);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
@@ -385,6 +410,13 @@ function App() {
   }, [view, selectedMaterialId, selectedTargetId, user]);
 
   useEffect(() => {
+    if (view !== "wrong" || !user) {
+      return;
+    }
+    void loadWrongQuestions();
+  }, [view, wrongQuestionFilters, user]);
+
+  useEffect(() => {
     setQaFocusedKnowledgePointIds((current) =>
       current.filter((id) => currentMaterialKnowledgePointIds.has(id))
     );
@@ -551,6 +583,25 @@ function App() {
       setAiUsageError(readMessage(error));
     } finally {
       setAiUsageLoading(false);
+    }
+  }
+
+  async function loadWrongQuestions(filters = wrongQuestionFilters) {
+    setWrongQuestionsLoading(true);
+    try {
+      const data = await api.listWrongQuestions(
+        1,
+        100,
+        filters.targetId ?? undefined,
+        filters.materialId ?? undefined,
+        filters.knowledgePointId ?? undefined,
+        filters.masteryStatus || undefined
+      );
+      setWrongQuestions(data.items);
+    } catch (error) {
+      setNotice({ tone: "danger", text: `错题加载失败：${readMessage(error)}` });
+    } finally {
+      setWrongQuestionsLoading(false);
     }
   }
 
@@ -1132,9 +1183,85 @@ function App() {
     try {
       const updated = await api.updateWrongQuestionMastery(id, masteryStatus);
       setWrongQuestions((current) => current.map((item) => (item.id === id ? updated : item)));
+      setWrongReviewQueue((current) => current.map((item) => (item.id === id ? updated : item)));
       setNotice({ tone: "info", text: "错题掌握状态已更新。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `错题状态更新失败：${readMessage(error)}` });
+    }
+  }
+
+  function handleWrongQuestionFiltersChange(nextFilters: WrongQuestionFilters) {
+    setWrongQuestionFilters(nextFilters);
+    setWrongRedoResult(null);
+    if (nextFilters.targetId && nextFilters.targetId !== selectedTargetId) {
+      setSelectedTargetId(nextFilters.targetId);
+    }
+  }
+
+  async function handleStartWrongReview() {
+    setWrongReviewLoading(true);
+    setWrongRedoResult(null);
+    try {
+      const queue = await api.listWrongQuestionReviewQueue(
+        wrongQuestionFilters.targetId ?? selectedTargetId ?? undefined,
+        wrongQuestionFilters.knowledgePointId ?? undefined,
+        10
+      );
+      setWrongReviewQueue(queue);
+      setWrongReviewIndex(0);
+      setWrongBookMode("review");
+      setNotice({
+        tone: queue.length ? "success" : "warning",
+        text: queue.length ? "已生成错题复习队列。" : "当前筛选条件下暂无可复习错题。"
+      });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `错题复习队列生成失败：${readMessage(error)}` });
+    } finally {
+      setWrongReviewLoading(false);
+    }
+  }
+
+  async function handleRedoWrongQuestion(id: number, answer: TestSubmitAnswer) {
+    setWrongRedoSubmitting(true);
+    setWrongRedoResult(null);
+    try {
+      const data = await api.redoWrongQuestion(id, answer);
+      setWrongRedoResult(data.result);
+      setQuestionExplainAnswers((current) => {
+        const next = { ...current };
+        delete next[data.result.question_id];
+        return next;
+      });
+      setWrongQuestions((current) =>
+        current.map((item) => (item.id === id ? data.wrong_question : item))
+      );
+      setWrongReviewQueue((current) =>
+        current.map((item) => (item.id === id ? data.wrong_question : item))
+      );
+      setNotice({ tone: "success", text: "错题重做已评分，掌握状态已更新。" });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `错题重做失败：${readMessage(error)}` });
+    } finally {
+      setWrongRedoSubmitting(false);
+    }
+  }
+
+  async function handleExplainQuestion(questionId: number, question: string) {
+    const trimmed = question.trim();
+    if (!trimmed || questionExplainLoading[questionId]) {
+      return;
+    }
+    setQuestionExplainLoading((current) => ({ ...current, [questionId]: true }));
+    try {
+      const data = await api.explainQuestion(questionId, trimmed);
+      setQuestionExplainAnswers((current) => ({ ...current, [questionId]: data.answer }));
+    } catch (error) {
+      setQuestionExplainAnswers((current) => ({
+        ...current,
+        [questionId]: `AI 追问失败：${readMessage(error)}`
+      }));
+    } finally {
+      setQuestionExplainLoading((current) => ({ ...current, [questionId]: false }));
     }
   }
 
@@ -1268,7 +1395,17 @@ function App() {
     setQuestions([]);
     setTestResult(null);
     setWrongQuestions([]);
+    setWrongQuestionFilters({ targetId: null, materialId: null, knowledgePointId: null, masteryStatus: "" });
+    setWrongQuestionsLoading(false);
+    setWrongBookMode("library");
+    setWrongReviewQueue([]);
+    setWrongReviewIndex(0);
+    setWrongReviewLoading(false);
+    setWrongRedoSubmitting(false);
+    setWrongRedoResult(null);
     setReviewPlans([]);
+    setQuestionExplainAnswers({});
+    setQuestionExplainLoading({});
     setKnowledge(null);
     setTargetKnowledge(null);
     setKnowledgeGraph(null);
@@ -1530,6 +1667,8 @@ function App() {
             questionBatchContext={questionBatchContext}
             isGenerating={aiPendingActions.questions}
             isSubmitting={aiPendingActions.test}
+            explainAnswers={questionExplainAnswers}
+            explainLoading={questionExplainLoading}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onSelectFocusPoint={(pointId) =>
@@ -1542,6 +1681,7 @@ function App() {
             onSubViewChange={setPracticeSubView}
             onGenerate={handleGenerateQuestions}
             onSubmit={handleSubmitTest}
+            onExplainQuestion={(questionId, question) => void handleExplainQuestion(questionId, question)}
             onOpenWrong={() => setView("wrong")}
             onOpenPlans={() => setView("plans")}
             onClearFocus={() => setPracticeFocusedKnowledgePointIds([])}
@@ -1551,7 +1691,32 @@ function App() {
         {view === "wrong" ? (
           <WrongQuestionsPage
             items={wrongQuestions}
+            targets={targets}
+            materials={materials}
+            knowledgePoints={knowledgeGraph?.nodes ?? []}
+            filters={wrongQuestionFilters}
+            mode={wrongBookMode}
+            loading={wrongQuestionsLoading}
+            reviewQueue={wrongReviewQueue}
+            reviewIndex={wrongReviewIndex}
+            reviewLoading={wrongReviewLoading}
+            redoSubmitting={wrongRedoSubmitting}
+            redoResult={wrongRedoResult}
+            explainAnswers={questionExplainAnswers}
+            explainLoading={questionExplainLoading}
+            onFiltersChange={handleWrongQuestionFiltersChange}
+            onModeChange={(mode) => {
+              setWrongBookMode(mode);
+              setWrongRedoResult(null);
+            }}
             onUpdateMastery={handleUpdateMastery}
+            onStartReview={() => void handleStartWrongReview()}
+            onRedo={(id, answer) => void handleRedoWrongQuestion(id, answer)}
+            onExplainQuestion={(questionId, question) => void handleExplainQuestion(questionId, question)}
+            onNextReview={() => {
+              setWrongRedoResult(null);
+              setWrongReviewIndex((current) => Math.min(current + 1, Math.max(wrongReviewQueue.length - 1, 0)));
+            }}
             onExport={() =>
               void handleExport(
                 () => api.exportWrongQuestions(selectedTargetId ?? undefined, selectedMaterialId ?? undefined),
@@ -2949,12 +3114,15 @@ function PracticePage({
   questionBatchContext,
   isGenerating,
   isSubmitting,
+  explainAnswers,
+  explainLoading,
   onSelectTarget,
   onSelectMaterial,
   onSelectFocusPoint,
   onSubViewChange,
   onGenerate,
   onSubmit,
+  onExplainQuestion,
   onOpenWrong,
   onOpenPlans,
   onClearFocus
@@ -2973,12 +3141,15 @@ function PracticePage({
   questionBatchContext: QuestionBatchContext | null;
   isGenerating: boolean;
   isSubmitting: boolean;
+  explainAnswers: Record<number, string>;
+  explainLoading: Record<number, boolean>;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
   onSelectFocusPoint: (pointId: number) => void;
   onSubViewChange: (view: PracticeSubView) => void;
   onGenerate: (formData: FormData) => void;
   onSubmit: (answers: TestSubmitAnswer[]) => void;
+  onExplainQuestion: (questionId: number, question: string) => void;
   onOpenWrong: () => void;
   onOpenPlans: () => void;
   onClearFocus: () => void;
@@ -3216,7 +3387,15 @@ function PracticePage({
       </div>
 
       {subView === "results" ? (
-        <ResultsPage result={testResult} questions={questions} onOpenWrong={onOpenWrong} onOpenPlans={onOpenPlans} />
+        <ResultsPage
+          result={testResult}
+          questions={questions}
+          explainAnswers={explainAnswers}
+          explainLoading={explainLoading}
+          onExplainQuestion={onExplainQuestion}
+          onOpenWrong={onOpenWrong}
+          onOpenPlans={onOpenPlans}
+        />
       ) : (
       <div className="question-list">
         {questions.length ? (
@@ -3326,11 +3505,17 @@ function PracticePage({
 function ResultsPage({
   result,
   questions,
+  explainAnswers,
+  explainLoading,
+  onExplainQuestion,
   onOpenWrong,
   onOpenPlans
 }: {
   result: TestResult | null;
   questions: Question[];
+  explainAnswers: Record<number, string>;
+  explainLoading: Record<number, boolean>;
+  onExplainQuestion: (questionId: number, question: string) => void;
   onOpenWrong: () => void;
   onOpenPlans: () => void;
 }) {
@@ -3369,6 +3554,12 @@ function ResultsPage({
                 {item.matched_points.length ? <InfoList title="已覆盖要点" items={item.matched_points} /> : null}
                 {item.missing_points.length ? <InfoList title="缺失要点" items={item.missing_points} /> : null}
                 {item.misconceptions.length ? <InfoList title="误区" items={item.misconceptions} /> : null}
+                <QuestionExplainBox
+                  questionId={item.question_id}
+                  answer={explainAnswers[item.question_id]}
+                  loading={Boolean(explainLoading[item.question_id])}
+                  onAsk={onExplainQuestion}
+                />
               </article>
             );
           })}
@@ -3382,39 +3573,330 @@ function ResultsPage({
   );
 }
 
+function QuestionExplainBox({
+  questionId,
+  answer,
+  loading,
+  onAsk
+}: {
+  questionId: number;
+  answer?: string;
+  loading: boolean;
+  onAsk: (questionId: number, question: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [question, setQuestion] = useState("");
+
+  return (
+    <div className="question-explain-box">
+      <button className="ghost-button" type="button" onClick={() => setOpen((current) => !current)}>
+        <MessageSquare size={16} />
+        AI 追问
+      </button>
+      {open ? (
+        <div className="question-explain-panel">
+          <textarea
+            value={question}
+            onChange={(event) => setQuestion(event.currentTarget.value)}
+            placeholder="例如：为什么选这个答案？我哪里理解错了？再举一个例子。"
+          />
+          <button
+            className="primary-button"
+            type="button"
+            disabled={loading || !question.trim()}
+            onClick={() => onAsk(questionId, question)}
+          >
+            {loading ? <LoaderCircle className="spin-icon" size={16} /> : <Bot size={16} />}
+            {loading ? "思考中" : "提交追问"}
+          </button>
+          {answer ? (
+            <div className="chat-answer-markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function WrongQuestionsPage({
   items,
+  targets,
+  materials,
+  knowledgePoints,
+  filters,
+  mode,
+  loading,
+  reviewQueue,
+  reviewIndex,
+  reviewLoading,
+  redoSubmitting,
+  redoResult,
+  explainAnswers,
+  explainLoading,
+  onFiltersChange,
+  onModeChange,
   onUpdateMastery,
+  onStartReview,
+  onRedo,
+  onExplainQuestion,
+  onNextReview,
   onExport
 }: {
   items: WrongQuestion[];
+  targets: StudyTarget[];
+  materials: Material[];
+  knowledgePoints: KnowledgePointReference[];
+  filters: WrongQuestionFilters;
+  mode: WrongBookMode;
+  loading: boolean;
+  reviewQueue: WrongQuestion[];
+  reviewIndex: number;
+  reviewLoading: boolean;
+  redoSubmitting: boolean;
+  redoResult: TestResultItem | null;
+  explainAnswers: Record<number, string>;
+  explainLoading: Record<number, boolean>;
+  onFiltersChange: (filters: WrongQuestionFilters) => void;
+  onModeChange: (mode: WrongBookMode) => void;
   onUpdateMastery: (id: number, masteryStatus: WrongQuestion["mastery_status"]) => void;
+  onStartReview: () => void;
+  onRedo: (id: number, answer: TestSubmitAnswer) => void;
+  onExplainQuestion: (questionId: number, question: string) => void;
+  onNextReview: () => void;
   onExport: () => void;
 }) {
-  return (
-    <section className="panel">
-      <PanelTitle icon={AlertTriangle} title="错题本" />
+  const [objectiveAnswers, setObjectiveAnswers] = useState<Record<number, string[]>>({});
+  const [subjectiveAnswers, setSubjectiveAnswers] = useState<Record<number, string>>({});
+  const visibleMaterials = filters.targetId
+    ? materials.filter((material) => material.target_id === filters.targetId)
+    : materials;
+  const groupedByStatus = (["unmastered", "reviewing", "mastered"] as const).map((status) => ({
+    status,
+    items: items.filter((item) => item.mastery_status === status)
+  }));
+  const currentReview = reviewQueue[reviewIndex] ?? null;
+  const selectedAnswers = currentReview ? objectiveAnswers[currentReview.id] ?? [] : [];
+
+  function patchFilters(partial: Partial<WrongQuestionFilters>) {
+    onFiltersChange({
+      ...filters,
+      ...partial
+    });
+  }
+
+  function submitRedo(item: WrongQuestion) {
+    if (item.question_type === "subjective") {
+      onRedo(item.id, {
+        question_id: item.question_id,
+        answer_text: subjectiveAnswers[item.id]?.trim() ?? ""
+      });
+      return;
+    }
+    onRedo(item.id, {
+      question_id: item.question_id,
+      answer: objectiveAnswers[item.id] ?? []
+    });
+  }
+
+  function renderMasteryButtons(item: WrongQuestion) {
+    return (
       <div className="quick-actions">
-        <button onClick={onExport}><Download size={16} />导出错题 Markdown</button>
-      </div>
-      <div className="list">
-        {items.map((item) => (
-          <article className="list-item vertical" key={item.id}>
-            <strong>{item.stem}</strong>
-            <span>知识点：{item.knowledge_points.length ? item.knowledge_points.join("、") : "未标注"}</span>
-            <span>你的答案：{formatAnswer(item.user_answer)} · 正确答案：{formatAnswer(item.correct_answer)}</span>
-            {item.wrong_reason ? <p>{item.wrong_reason}</p> : null}
-            {item.analysis ? <p>{item.analysis}</p> : null}
-            <div className="quick-actions">
-              {(["unmastered", "reviewing", "mastered"] as const).map((status) => (
-                <button key={status} className={item.mastery_status === status ? "active-pill" : ""} onClick={() => onUpdateMastery(item.id, status)}>
-                  {status}
-                </button>
-              ))}
-            </div>
-          </article>
+        {(["unmastered", "reviewing", "mastered"] as const).map((status) => (
+          <button
+            key={status}
+            className={item.mastery_status === status ? "active-pill" : ""}
+            onClick={() => onUpdateMastery(item.id, status)}
+          >
+            {masteryLabel(status)}
+          </button>
         ))}
       </div>
+    );
+  }
+
+  function renderWrongCard(item: WrongQuestion) {
+    const target = targets.find((entry) => entry.id === item.target_id);
+    const material = materials.find((entry) => entry.id === item.material_id);
+    return (
+      <article className="list-item vertical" key={item.id}>
+        <div className="wrong-card-head">
+          <strong>{item.stem}</strong>
+          <span className={`status-badge ${item.mastery_status}`}>{masteryLabel(item.mastery_status)}</span>
+        </div>
+        <span>{target?.title ?? `目标 ${item.target_id ?? "未限定"}`} · {material?.original_filename ?? `资料 ${item.material_id}`}</span>
+        <span>
+          复习 {item.review_count} 次 · 最近复习：{formatDateTimeZh(item.last_reviewed_at)} · 下次：{formatDateTimeZh(item.next_review_at)}
+        </span>
+        <div className="tag-cloud">
+          {item.knowledge_points.length ? item.knowledge_points.map((point) => <span key={point}>{point}</span>) : <span>未标注知识点</span>}
+        </div>
+        <span>你的答案：{formatAnswer(item.user_answer)} · 正确答案：{formatAnswer(item.correct_answer)}</span>
+        {item.wrong_reason ? <p>{item.wrong_reason}</p> : null}
+        {item.analysis ? <p>{item.analysis}</p> : null}
+        {renderMasteryButtons(item)}
+      </article>
+    );
+  }
+
+  return (
+    <section className="panel wrong-book-panel">
+      <PanelTitle icon={AlertTriangle} title="错题本" />
+      <div className="quick-actions">
+        <button className={mode === "library" ? "active-pill" : ""} onClick={() => onModeChange("library")}>错题库</button>
+        <button className={mode === "review" ? "active-pill" : ""} onClick={() => onModeChange("review")}>复习模式</button>
+        <button onClick={onExport}><Download size={16} />导出错题 Markdown</button>
+      </div>
+
+      {mode === "library" ? (
+        <>
+          <div className="wrong-filter-grid">
+            <label className="field-block">
+              <span>目标</span>
+              <select
+                value={filters.targetId ?? ""}
+                onChange={(event) => patchFilters({
+                  targetId: event.currentTarget.value ? Number(event.currentTarget.value) : null,
+                  materialId: null,
+                  knowledgePointId: null
+                })}
+              >
+                <option value="">全部目标</option>
+                {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
+              </select>
+            </label>
+            <label className="field-block">
+              <span>资料</span>
+              <select
+                value={filters.materialId ?? ""}
+                onChange={(event) => patchFilters({ materialId: event.currentTarget.value ? Number(event.currentTarget.value) : null })}
+              >
+                <option value="">全部资料</option>
+                {visibleMaterials.map((material) => <option key={material.id} value={material.id}>{material.original_filename}</option>)}
+              </select>
+            </label>
+            <label className="field-block">
+              <span>知识点</span>
+              <select
+                value={filters.knowledgePointId ?? ""}
+                onChange={(event) => patchFilters({ knowledgePointId: event.currentTarget.value ? Number(event.currentTarget.value) : null })}
+              >
+                <option value="">全部知识点</option>
+                {knowledgePoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
+              </select>
+            </label>
+            <label className="field-block">
+              <span>掌握状态</span>
+              <select
+                value={filters.masteryStatus}
+                onChange={(event) => patchFilters({ masteryStatus: event.currentTarget.value as WrongQuestionFilters["masteryStatus"] })}
+              >
+                <option value="">全部状态</option>
+                <option value="unmastered">未掌握</option>
+                <option value="reviewing">复习中</option>
+                <option value="mastered">已掌握</option>
+              </select>
+            </label>
+          </div>
+          {loading ? <p className="muted-text">正在加载错题...</p> : null}
+          <div className="wrong-summary-grid">
+            {(["unmastered", "reviewing", "mastered"] as const).map((status) => (
+              <div className="summary-chip" key={status}>
+                <strong>{masteryLabel(status)}</strong>
+                <span>{items.filter((item) => item.mastery_status === status).length} 题</span>
+              </div>
+            ))}
+          </div>
+          <div className="list">
+            {groupedByStatus.map((group) => group.items.length ? (
+              <section className="wrong-group" key={group.status}>
+                <h3>{masteryLabel(group.status)}</h3>
+                {group.items.map(renderWrongCard)}
+              </section>
+            ) : null)}
+            {!loading && !items.length ? <EmptyPanel text="当前筛选条件下暂无错题。" /> : null}
+          </div>
+        </>
+      ) : (
+        <div className="wrong-review">
+          <div className="quick-actions">
+            <button className="primary-button" onClick={onStartReview} disabled={reviewLoading}>
+              {reviewLoading ? <LoaderCircle className="spin-icon" size={16} /> : <Sparkles size={16} />}
+              {reviewLoading ? "生成中" : "生成复习队列"}
+            </button>
+          </div>
+          {currentReview ? (
+            <article className="list-item vertical">
+              <div className="wrong-card-head">
+                <strong>第 {reviewIndex + 1} / {reviewQueue.length} 题</strong>
+                <span className={`status-badge ${currentReview.mastery_status}`}>{masteryLabel(currentReview.mastery_status)}</span>
+              </div>
+              <h3>{currentReview.stem}</h3>
+              {currentReview.question_type === "subjective" ? (
+                <textarea
+                  className="subjective-answer"
+                  placeholder="重新作答后提交"
+                  value={subjectiveAnswers[currentReview.id] ?? ""}
+                  onChange={(event) => setSubjectiveAnswers((current) => ({ ...current, [currentReview.id]: event.currentTarget.value }))}
+                />
+              ) : (
+                <div className="option-grid">
+                  {currentReview.options.map((option) => {
+                    const selected = selectedAnswers.includes(option.key);
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        className={`option ${selected ? "selected" : ""}`}
+                        onClick={() =>
+                          setObjectiveAnswers((current) => ({
+                            ...current,
+                            [currentReview.id]:
+                              currentReview.question_type === "multiple_choice"
+                                ? toggleSelection(current[currentReview.id] ?? [], option.key)
+                                : [option.key]
+                          }))
+                        }
+                      >
+                        <span>{option.key}</span>
+                        <div><strong>{option.text}</strong></div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="toolbar-actions">
+                <button className="primary-button" type="button" disabled={redoSubmitting} onClick={() => submitRedo(currentReview)}>
+                  {redoSubmitting ? <LoaderCircle className="spin-icon" size={16} /> : <ClipboardCheck size={16} />}
+                  {redoSubmitting ? "评分中" : "提交重做"}
+                </button>
+                <button type="button" disabled={reviewIndex >= reviewQueue.length - 1} onClick={onNextReview}>下一题</button>
+              </div>
+              {redoResult ? (
+                <div className="solution-box">
+                  <strong>本次得分：{Math.round(redoResult.score * 100)}%</strong>
+                  <p>你的答案：{formatAnswer(redoResult.user_answer)} · 正确答案：{formatAnswer(redoResult.correct_answer)}</p>
+                  <p>{redoResult.analysis}</p>
+                  {redoResult.missing_points.length ? <InfoList title="缺失要点" items={redoResult.missing_points} /> : null}
+                  {redoResult.misconceptions.length ? <InfoList title="误区" items={redoResult.misconceptions} /> : null}
+                  <QuestionExplainBox
+                    questionId={redoResult.question_id}
+                    answer={explainAnswers[redoResult.question_id]}
+                    loading={Boolean(explainLoading[redoResult.question_id])}
+                    onAsk={onExplainQuestion}
+                  />
+                </div>
+              ) : (
+                <p className="muted-text">提交前不会展示答案和解析；需要时也可以直接手动标记掌握状态。</p>
+              )}
+              {renderMasteryButtons(currentReview)}
+            </article>
+          ) : (
+            <EmptyPanel text="还没有复习队列，点击“生成复习队列”生成一组错题。" />
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -3721,6 +4203,25 @@ function formatDateZh(value: string | null | undefined, fallback = "未设置日
 
 function formatAnswer(values: string[]) {
   return values.length ? values.join(", ") : "未作答";
+}
+
+function formatDateTimeZh(value: string | null | undefined, fallback = "未复习") {
+  if (!value) return fallback;
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function masteryLabel(status: WrongQuestion["mastery_status"]) {
+  const labels: Record<WrongQuestion["mastery_status"], string> = {
+    unmastered: "未掌握",
+    reviewing: "复习中",
+    mastered: "已掌握"
+  };
+  return labels[status];
 }
 
 function emptyToUndefined(value: FormDataEntryValue | null) {

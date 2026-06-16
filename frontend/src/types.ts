@@ -221,6 +221,11 @@ export interface QuestionSolution {
   }>;
 }
 
+export interface QuestionExplainResponse {
+  question_id: number;
+  answer: string;
+}
+
 export interface TestSubmitAnswer {
   question_id: number;
   answer?: string[];
@@ -286,6 +291,17 @@ export interface WrongQuestion {
   knowledge_points: string[];
   knowledge_point_ids: number[];
   mastery_status: MasteryStatus;
+  review_count: number;
+  last_reviewed_at: string | null;
+  next_review_at: string | null;
+  question_type: QuestionType | null;
+  options: QuestionOption[];
+  difficulty: Difficulty | null;
+}
+
+export interface WrongQuestionRedoResult {
+  result: TestResultItem;
+  wrong_question: WrongQuestion;
 }
 
 export interface ReviewPlanTask {

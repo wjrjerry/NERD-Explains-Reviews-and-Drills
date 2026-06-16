@@ -10,6 +10,7 @@ from app.repositories.material_repository import MaterialRepository
 from app.repositories.question_repository import QuestionRepository
 from app.repositories.study_target_repository import StudyTargetRepository
 from app.schemas.question import (
+    QuestionExplainResponse,
     QuestionGenerateRequest,
     QuestionGenerateResponse,
     QuestionHintResponse,
@@ -326,3 +327,47 @@ async def get_question_solution(
             for option in question.options
         ],
     )
+
+
+async def explain_question(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    question_id: int,
+    student_question: str,
+) -> QuestionExplainResponse:
+    """Answer a follow-up question about one generated question."""
+    question = await QuestionRepository.get_question_by_id(
+        db,
+        user_id=user_id,
+        question_id=question_id,
+    )
+    if question is None:
+        raise LookupError("Question not found.")
+
+    ai_usage_service.clear_pending_traces()
+    try:
+        answer = ai_service.explain_question(
+            stem=question.stem,
+            options=[
+                {
+                    "key": str(option.get("key", "")),
+                    "text": str(option.get("text", "")),
+                    "analysis": str(option.get("analysis", "")),
+                }
+                for option in question.options
+            ],
+            correct_answer=[str(answer) for answer in question.correct_answer],
+            analysis=question.analysis,
+            knowledge_points=[str(point) for point in question.knowledge_points],
+            student_question=student_question,
+        )
+    finally:
+        await ai_usage_service.record_pending_traces(
+            db,
+            user_id=user_id,
+            target_id=question.target_id,
+            material_id=question.material_id,
+        )
+
+    return QuestionExplainResponse(question_id=question.id, answer=answer)

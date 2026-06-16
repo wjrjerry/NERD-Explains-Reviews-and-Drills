@@ -524,6 +524,49 @@ def _answer_question_with_real_ai(
     )
 
 
+def explain_question(
+    *,
+    stem: str,
+    options: list[dict[str, str]],
+    correct_answer: list[str],
+    analysis: str,
+    knowledge_points: list[str],
+    student_question: str,
+) -> str:
+    """Explain one generated question in response to a student's follow-up."""
+    option_lines = [
+        f"{option.get('key', '')}. {option.get('text', '')}"
+        + (f"（解析：{option.get('analysis', '')}）" if option.get("analysis") else "")
+        for option in options
+    ]
+    if settings.ai_provider == "mock":
+        return (
+            f"这道题的关键是：{analysis} "
+            f"正确答案是 {', '.join(correct_answer) if correct_answer else '参考答案见解析'}。"
+            f"针对你的追问「{student_question}」，可以结合知识点"
+            f"「{'、'.join(knowledge_points) or '未标注'}」重新梳理题干和选项。"
+        )
+
+    system_prompt = (
+        "你是一个备考复习题目讲解助手。请根据题干、选项、正确答案和原解析，"
+        "回答学生关于这道题的追问。回答要具体、清晰，必要时指出学生可能混淆的概念。"
+    )
+    user_prompt = (
+        f"题干：\n{stem}\n\n"
+        f"选项：\n{chr(10).join(option_lines) or '无'}\n\n"
+        f"正确答案：{', '.join(correct_answer) if correct_answer else '见参考解析'}\n"
+        f"原解析：{analysis}\n"
+        f"知识点：{'、'.join(knowledge_points) or '未标注'}\n\n"
+        f"学生追问：{student_question}\n\n"
+        "请给出进一步解释："
+    )
+    return llm_service.chat_completion(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        task="question_explanation",
+    )
+
+
 def _build_question_id(material_id: int, index: int) -> int:
     """Build a readable deterministic mock question ID."""
     return material_id * 1000 + index + 1

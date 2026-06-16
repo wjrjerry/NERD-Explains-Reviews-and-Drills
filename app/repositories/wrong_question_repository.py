@@ -1,6 +1,9 @@
-from sqlalchemy import func, select
+from datetime import datetime
+
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.knowledge_point import KnowledgePoint
 from app.models.wrong_question import (
     MasteryStatus,
     WrongQuestion,
@@ -183,6 +186,9 @@ class WrongQuestionRepository:
         user_id: int,
         wrong_question_id: int,
         mastery_status: MasteryStatus,
+        reviewed_at: datetime | None = None,
+        next_review_at: datetime | None = None,
+        increment_review_count: bool = False,
     ) -> WrongQuestion | None:
         """Update the mastery status of one wrong question."""
         wrong_question = await WrongQuestionRepository.get_wrong_question_by_id(
@@ -194,8 +200,74 @@ class WrongQuestionRepository:
             return None
 
         wrong_question.mastery_status = mastery_status
+        if reviewed_at is not None:
+            wrong_question.last_reviewed_at = reviewed_at
+        wrong_question.next_review_at = next_review_at
+        if increment_review_count:
+            wrong_question.review_count += 1
         db.add(wrong_question)
         await db.commit()
         await db.refresh(wrong_question)
 
         return wrong_question
+
+    @staticmethod
+    async def list_review_candidates(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        mastery_status: MasteryStatus,
+        target_id: int | None = None,
+        knowledge_point_id: int | None = None,
+        due_at: datetime | None = None,
+        due_only: bool = False,
+        exclude_ids: set[int] | None = None,
+        limit: int = 10,
+    ) -> list[WrongQuestion]:
+        """Return review candidates for one status bucket."""
+        conditions = [
+            WrongQuestion.user_id == user_id,
+            WrongQuestion.mastery_status == mastery_status,
+        ]
+        if target_id is not None:
+            conditions.append(WrongQuestion.target_id == target_id)
+        if knowledge_point_id is not None:
+            conditions.append(WrongQuestionKnowledgePoint.knowledge_point_id == knowledge_point_id)
+        if exclude_ids:
+            conditions.append(WrongQuestion.id.notin_(exclude_ids))
+        if due_only and due_at is not None:
+            conditions.append(
+                or_(
+                    WrongQuestion.review_count == 0,
+                    WrongQuestion.next_review_at.is_(None),
+                    WrongQuestion.next_review_at <= due_at,
+                )
+            )
+
+        query = (
+            select(
+                WrongQuestion,
+                func.coalesce(func.max(KnowledgePoint.importance_weight), 0).label("importance"),
+            )
+            .select_from(WrongQuestion)
+            .outerjoin(
+                WrongQuestionKnowledgePoint,
+                WrongQuestion.id == WrongQuestionKnowledgePoint.wrong_question_id,
+            )
+            .outerjoin(
+                KnowledgePoint,
+                KnowledgePoint.id == WrongQuestionKnowledgePoint.knowledge_point_id,
+            )
+            .where(*conditions)
+            .group_by(WrongQuestion.id)
+            .order_by(
+                WrongQuestion.review_count.asc(),
+                WrongQuestion.next_review_at.asc().nullsfirst(),
+                desc("importance"),
+                func.random(),
+                WrongQuestion.created_at.asc(),
+            )
+            .limit(limit)
+        )
+        result = await db.execute(query)
+        return [row[0] for row in result.all()]

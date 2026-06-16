@@ -8,6 +8,8 @@ from app.schemas.response import ApiResponse, PageResult
 from app.schemas.wrong_question import (
     MasteryStatus,
     WrongQuestionMasteryUpdateRequest,
+    WrongQuestionRedoRequest,
+    WrongQuestionRedoResponse,
     WrongQuestionResponse,
 )
 from app.services import wrong_question_service
@@ -48,6 +50,25 @@ async def list_wrong_questions(
     )
 
 
+@router.get("/review-queue", response_model=ApiResponse[list[WrongQuestionResponse]])
+async def list_wrong_question_review_queue(
+    target_id: int | None = Query(default=None, description="课程/考试目标 ID"),
+    knowledge_point_id: int | None = Query(default=None, description="知识点 ID"),
+    limit: int = Query(default=10, ge=1, le=50, description="队列题目数量"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a weighted review queue for wrong questions."""
+    items = await wrong_question_service.list_review_queue(
+        db,
+        user_id=current_user.id,
+        target_id=target_id,
+        knowledge_point_id=knowledge_point_id,
+        limit=limit,
+    )
+    return success(items)
+
+
 @router.get("/{wrong_question_id}", response_model=ApiResponse[WrongQuestionResponse])
 async def get_wrong_question(
     wrong_question_id: int,
@@ -59,6 +80,28 @@ async def get_wrong_question(
         db,
         user_id=current_user.id,
         wrong_question_id=wrong_question_id,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Wrong question not found.",
+        )
+    return success(result)
+
+
+@router.post("/{wrong_question_id}/redo", response_model=ApiResponse[WrongQuestionRedoResponse])
+async def redo_wrong_question(
+    wrong_question_id: int,
+    payload: WrongQuestionRedoRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit a new answer for one wrong question and update review state."""
+    result = await wrong_question_service.redo_wrong_question(
+        db,
+        user_id=current_user.id,
+        wrong_question_id=wrong_question_id,
+        answer=payload.answer,
     )
     if result is None:
         raise HTTPException(

@@ -5,6 +5,8 @@ from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
 from app.schemas.question import (
+    QuestionExplainRequest,
+    QuestionExplainResponse,
     QuestionGenerateRequest,
     QuestionGenerateResponse,
     QuestionHintResponse,
@@ -95,6 +97,37 @@ async def get_question_hint(
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return success(result)
+
+
+@router.post(
+    "/{question_id}/explain",
+    response_model=ApiResponse[QuestionExplainResponse],
+)
+async def explain_question(
+    question_id: int,
+    payload: QuestionExplainRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Answer a follow-up question about one generated question."""
+    try:
+        result = await question_service.explain_question(
+            db,
+            user_id=current_user.id,
+            question_id=question_id,
+            student_question=payload.question,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except LlmServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
     return success(result)

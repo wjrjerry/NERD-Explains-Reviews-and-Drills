@@ -80,6 +80,15 @@ class QuestionSolutionResponse(BaseModel):
     options: list[QuestionSolutionOption]
 
 
+class QuestionExplainRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=1000)
+
+
+class QuestionExplainResponse(BaseModel):
+    question_id: int
+    answer: str
+
+
 class QuestionGenerateResponse(BaseModel):
     material_id: int | None = None
     target_id: int | None = None

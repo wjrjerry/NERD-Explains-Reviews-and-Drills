@@ -17,6 +17,7 @@ import type {
   MaterialPreview,
   MaterialStructured,
   QaRecord,
+  QuestionExplainResponse,
   QuestionHint,
   QuestionSolution,
   QuestionType,
@@ -27,7 +28,8 @@ import type {
   TestSubmitAnswer,
   TestResult,
   User,
-  WrongQuestion
+  WrongQuestion,
+  WrongQuestionRedoResult
 } from "./types";
 
 const DEFAULT_API_BASE = "/api";
@@ -355,6 +357,11 @@ export const api = {
     request<QuestionHint>(`/questions/${questionId}/hints/${level}`),
   getQuestionSolution: (questionId: number) =>
     request<QuestionSolution>(`/questions/${questionId}/solution`),
+  explainQuestion: (questionId: number, question: string) =>
+    request<QuestionExplainResponse>(`/questions/${questionId}/explain`, {
+      method: "POST",
+      body: JSON.stringify({ question })
+    }),
 
   submitTest: (materialId: number, targetId: number | null, answers: TestSubmitAnswer[]) =>
     request<TestResult>("/tests/submit", {
@@ -366,17 +373,38 @@ export const api = {
       `/tests/records?page=${page}&page_size=${pageSize}${targetId ? `&target_id=${targetId}` : ""}${materialId ? `&material_id=${materialId}` : ""}`
     ),
 
-  listWrongQuestions: (page = 1, pageSize = 10, targetId?: number, materialId?: number, knowledgePointId?: number) =>
+  listWrongQuestions: (
+    page = 1,
+    pageSize = 10,
+    targetId?: number,
+    materialId?: number,
+    knowledgePointId?: number,
+    masteryStatus?: WrongQuestion["mastery_status"]
+  ) =>
     request<Pagination<WrongQuestion>>(
       `/wrong-questions${buildQuery({
         page,
         page_size: pageSize,
         target_id: targetId,
         material_id: materialId,
-        knowledge_point_id: knowledgePointId
+        knowledge_point_id: knowledgePointId,
+        mastery_status: masteryStatus
       })}`
     ),
   getWrongQuestion: (wrongQuestionId: number) => request<WrongQuestion>(`/wrong-questions/${wrongQuestionId}`),
+  listWrongQuestionReviewQueue: (targetId?: number, knowledgePointId?: number, limit = 10) =>
+    request<WrongQuestion[]>(
+      `/wrong-questions/review-queue${buildQuery({
+        target_id: targetId,
+        knowledge_point_id: knowledgePointId,
+        limit
+      })}`
+    ),
+  redoWrongQuestion: (wrongQuestionId: number, answer: TestSubmitAnswer) =>
+    request<WrongQuestionRedoResult>(`/wrong-questions/${wrongQuestionId}/redo`, {
+      method: "POST",
+      body: JSON.stringify({ answer })
+    }),
   updateWrongQuestionMastery: (wrongQuestionId: number, masteryStatus: WrongQuestion["mastery_status"]) =>
     request<WrongQuestion>(`/wrong-questions/${wrongQuestionId}/mastery`, {
       method: "PATCH",

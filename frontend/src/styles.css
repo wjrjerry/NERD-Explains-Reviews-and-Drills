@@ -1188,6 +1188,91 @@ blockquote {
   opacity: 0.55;
 }
 
+.wrong-book-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.wrong-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.wrong-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.wrong-group {
+  display: grid;
+  gap: 10px;
+}
+
+.wrong-group h3 {
+  margin: 4px 0;
+  color: #1f3658;
+  font-size: 16px;
+}
+
+.wrong-card-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.wrong-card-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-badge.unmastered {
+  color: #b42318;
+  background: rgba(255, 59, 48, 0.12);
+}
+
+.status-badge.reviewing {
+  color: #936200;
+  background: rgba(255, 204, 0, 0.18);
+}
+
+.status-badge.mastered {
+  color: #0f7a3d;
+  background: rgba(52, 199, 89, 0.14);
+}
+
+.wrong-review {
+  display: grid;
+  gap: 14px;
+}
+
+.question-explain-box {
+  display: grid;
+  gap: 10px;
+}
+
+.question-explain-panel {
+  display: grid;
+  gap: 10px;
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.question-explain-panel textarea {
+  min-height: 86px;
+}
+
 .hint-box {
   display: grid;
   gap: 10px;

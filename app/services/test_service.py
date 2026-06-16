@@ -71,24 +71,18 @@ def _score_objective_answer(
     correct_answer = _normalize_answer(question.correct_answer)
     is_correct = user_answer == correct_answer
     score = 1.0 if is_correct else 0.0
-    wrong_reason = ""
-    if not is_correct:
-        wrong_reason = ai_service.analyze_wrong_reason(
-            stem=question.stem,
-            options=[
-                {
-                    "key": str(option.get("key", "")),
-                    "text": str(option.get("text", "")),
-                    "analysis": str(option.get("analysis", "")),
-                }
-                for option in question.options
-            ],
-            user_answer=user_answer,
-            correct_answer=correct_answer,
-            analysis=question.analysis,
-            knowledge_points=[str(point) for point in question.knowledge_points],
-        )
-    missing_points = [] if is_correct else [question.analysis]
+    if is_correct:
+        return score, is_correct, question.analysis, "", [], [], []
+
+    selected_set = set(user_answer)
+    option_feedback = [
+        str(option.get("analysis", "")).strip()
+        for option in question.options
+        if str(option.get("key", "")).strip() in selected_set
+        and str(option.get("analysis", "")).strip()
+    ]
+    missing_points = option_feedback or [question.analysis]
+    wrong_reason = _build_wrong_reason(question, user_answer)
     return score, is_correct, question.analysis, wrong_reason, [], missing_points, []
 
 
@@ -159,6 +153,78 @@ def _build_knowledge_point_summary(
             )
         )
     return summaries
+
+
+async def score_single_answer(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    question: Question,
+    submitted: TestAnswerItem,
+    target_id: int | None,
+    material_id: int,
+    knowledge_point_ids: list[int],
+) -> tuple[TestResultItem, str]:
+    """Score one submitted answer and return the public result plus wrong reason."""
+    user_answer = _extract_submitted_answer(submitted, question)
+    if question.question_type.value in OBJECTIVE_QUESTION_TYPES:
+        correct_answer = _normalize_answer(question.correct_answer)
+        ai_usage_service.clear_pending_traces()
+        try:
+            (
+                item_score,
+                is_correct,
+                item_analysis,
+                wrong_reason,
+                matched_points,
+                missing_points,
+                misconceptions,
+            ) = _score_objective_answer(question, user_answer)
+        finally:
+            await ai_usage_service.record_pending_traces(
+                db,
+                user_id=user_id,
+                target_id=target_id or question.target_id,
+                material_id=material_id,
+            )
+    else:
+        correct_answer = [
+            str(answer).strip()
+            for answer in question.correct_answer
+            if str(answer).strip()
+        ]
+        ai_usage_service.clear_pending_traces()
+        try:
+            (
+                item_score,
+                is_correct,
+                item_analysis,
+                wrong_reason,
+                matched_points,
+                missing_points,
+                misconceptions,
+            ) = _score_subjective_answer(question, user_answer)
+        finally:
+            await ai_usage_service.record_pending_traces(
+                db,
+                user_id=user_id,
+                target_id=target_id or question.target_id,
+                material_id=material_id,
+            )
+
+    result = TestResultItem(
+        question_id=question.id,
+        knowledge_point_ids=knowledge_point_ids,
+        user_answer=user_answer,
+        correct_answer=correct_answer,
+        is_correct=is_correct,
+        score=item_score,
+        analysis=item_analysis,
+        matched_points=matched_points,
+        missing_points=missing_points,
+        misconceptions=misconceptions,
+    )
+    return result, wrong_reason or _build_wrong_reason(question, user_answer)
 
 
 async def submit_test(

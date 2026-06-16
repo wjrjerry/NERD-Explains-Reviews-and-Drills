@@ -1,6 +1,10 @@
 from enum import Enum
+from datetime import datetime
 
 from pydantic import BaseModel, Field
+
+from app.schemas.question import QuestionDifficulty, QuestionOption, QuestionType
+from app.schemas.test_record import TestAnswerItem, TestResultItem
 
 
 class MasteryStatus(str, Enum):
@@ -22,7 +26,22 @@ class WrongQuestionResponse(BaseModel):
     knowledge_points: list[str]
     knowledge_point_ids: list[int] = Field(default_factory=list)
     mastery_status: MasteryStatus
+    review_count: int = 0
+    last_reviewed_at: datetime | None = None
+    next_review_at: datetime | None = None
+    question_type: QuestionType | None = None
+    options: list[QuestionOption] = Field(default_factory=list)
+    difficulty: QuestionDifficulty | None = None
 
 
 class WrongQuestionMasteryUpdateRequest(BaseModel):
     mastery_status: MasteryStatus = Field(description="New mastery status.")
+
+
+class WrongQuestionRedoRequest(BaseModel):
+    answer: TestAnswerItem
+
+
+class WrongQuestionRedoResponse(BaseModel):
+    result: TestResultItem
+    wrong_question: WrongQuestionResponse

@@ -104,6 +104,23 @@ class WrongQuestion(Base):
         default=MasteryStatus.unmastered,
         comment="掌握状态",
     )
+    review_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="错题复习次数",
+    )
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="最近一次复习时间",
+    )
+    next_review_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+        comment="建议下次复习时间",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
