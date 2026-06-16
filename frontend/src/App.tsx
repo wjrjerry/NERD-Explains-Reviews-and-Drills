@@ -4115,6 +4115,18 @@ function WrongQuestionsPage({
     status,
     items: items.filter((item) => item.mastery_status === status)
   }));
+  const masteryFilterOptions: Array<{
+    value: WrongQuestionFilters["masteryStatus"];
+    label: string;
+    count: number;
+  }> = [
+    { value: "", label: "全部", count: items.length },
+    ...(["unmastered", "reviewing", "mastered"] as const).map((status) => ({
+      value: status,
+      label: masteryLabel(status),
+      count: items.filter((item) => item.mastery_status === status).length
+    }))
+  ];
   const currentReview = reviewQueue[reviewIndex] ?? null;
   const selectedAnswers = currentReview ? objectiveAnswers[currentReview.id] ?? [] : [];
 
@@ -4225,26 +4237,19 @@ function WrongQuestionsPage({
                 {knowledgePoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
               </select>
             </label>
-            <label className="field-block">
-              <span>掌握状态</span>
-              <select
-                value={filters.masteryStatus}
-                onChange={(event) => patchFilters({ masteryStatus: event.currentTarget.value as WrongQuestionFilters["masteryStatus"] })}
-              >
-                <option value="">全部状态</option>
-                <option value="unmastered">未掌握</option>
-                <option value="reviewing">复习中</option>
-                <option value="mastered">已掌握</option>
-              </select>
-            </label>
           </div>
           {loading ? <p className="muted-text">正在加载错题...</p> : null}
           <div className="wrong-summary-grid">
-            {(["unmastered", "reviewing", "mastered"] as const).map((status) => (
-              <div className="summary-chip" key={status}>
-                <strong>{masteryLabel(status)}</strong>
-                <span>{items.filter((item) => item.mastery_status === status).length} 题</span>
-              </div>
+            {masteryFilterOptions.map((option) => (
+              <button
+                className={`summary-chip mastery-filter-chip ${option.value || "all"} ${filters.masteryStatus === option.value ? "selected" : ""}`}
+                key={option.value || "all"}
+                type="button"
+                onClick={() => patchFilters({ masteryStatus: option.value })}
+              >
+                <strong>{option.label}</strong>
+                <span>{option.count} 题</span>
+              </button>
             ))}
           </div>
           <div className="list">

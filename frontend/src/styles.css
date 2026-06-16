@@ -1631,6 +1631,36 @@ blockquote {
   overflow-wrap: anywhere;
 }
 
+button.summary-chip {
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+button.summary-chip:hover,
+button.summary-chip:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(0, 122, 255, 0.34);
+  box-shadow: 0 10px 24px rgba(31, 54, 88, 0.10);
+}
+
+.mastery-filter-chip.selected {
+  border-color: rgba(0, 122, 255, 0.48);
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.10);
+}
+
+.mastery-filter-chip.unmastered {
+  background: rgba(255, 59, 48, 0.08);
+}
+
+.mastery-filter-chip.reviewing {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.mastery-filter-chip.mastered {
+  background: rgba(52, 199, 89, 0.10);
+}
+
 .task-row {
   display: flex;
   gap: 11px;
