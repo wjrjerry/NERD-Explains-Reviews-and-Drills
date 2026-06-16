@@ -53,10 +53,10 @@ class Settings(BaseSettings):
     ai_base_url: str | None = None
     ai_model: str | None = None
     ai_timeout_seconds: int = 30
-    ai_billing_currency: str = "CNY"
-    ai_billing_policy_version: str = "local-token-v1"
-    ai_price_prompt_per_1k_tokens: float = 0.0
-    ai_price_completion_per_1k_tokens: float = 0.0
+    ai_billing_currency: str = "USD"
+    ai_billing_policy_version: str = "openrouter-qwen3-30b-a3b-instruct-2507-2026-06"
+    ai_price_prompt_per_1k_tokens: float = 0.00004815
+    ai_price_completion_per_1k_tokens: float = 0.0001931
     ai_price_cache_hit_prompt_per_1k_tokens: float | None = None
     ai_price_cache_miss_prompt_per_1k_tokens: float | None = None
     ai_price_reasoning_per_1k_tokens: float | None = None
