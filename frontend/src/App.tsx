@@ -2494,6 +2494,12 @@ function Dashboard({
   const averageAccuracy = testRecords.length
     ? Math.round((testRecords.reduce((sum, item) => sum + item.accuracy, 0) / testRecords.length) * 100)
     : 0;
+  const primaryTargetCopy = primaryTarget
+    ? primaryTarget.review_goal
+      ? `复习目标：${primaryTarget.review_goal}`
+      : "可在学习目标中补充复习目标。"
+    : "先创建课程或考试目标，再上传资料开始学习。";
+  const materialCountHint = primaryTarget ? "当前目标下的资料" : "全部目标资料";
 
   return (
     <div className="grid dashboard-grid">
@@ -2507,9 +2513,9 @@ function Dashboard({
           tabIndex={0}
           onKeyDown={(event) => handleKeyboardClick(event, () => onQuickView("targets"))}
         >
-          <p className="eyebrow">当前主目标</p>
+          <p className="eyebrow">主学习目标</p>
           <h2>{primaryTarget?.title ?? "还没有学习目标"}</h2>
-          <p>{primaryTarget?.review_goal ?? "先创建一个课程/考试目标，再开始上传资料和 AI 学习。"}</p>
+          <p>{primaryTargetCopy}</p>
           <div className="quick-actions">
             <button onClick={(event) => { event.stopPropagation(); onQuickView("targets"); }}><Plus size={16} />新建目标</button>
             <button onClick={(event) => { event.stopPropagation(); onQuickView("materials"); }}><Upload size={16} />上传资料</button>
@@ -2531,8 +2537,8 @@ function Dashboard({
         </button>
       </section>
 
-      <MetricCard icon={BookOpen} label="学习目标" value={targets.length} hint="对应 /study-targets" onClick={() => onQuickView("targets")} />
-      <MetricCard icon={FileText} label="当前资料总数" value={currentMaterialCount} hint="对应 /materials" onClick={() => onQuickView("materials")} />
+      <MetricCard icon={BookOpen} label="学习目标" value={targets.length} hint="管理课程与考试目标" onClick={() => onQuickView("targets")} />
+      <MetricCard icon={FileText} label="当前资料总数" value={currentMaterialCount} hint={materialCountHint} onClick={() => onQuickView("materials")} />
 
       <button className="panel clickable-panel dashboard-panel-button" type="button" onClick={() => onQuickView("graph")}>
         <PanelTitle icon={GitBranch} title="知识点掌握" />
@@ -2549,7 +2555,7 @@ function Dashboard({
 
       <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="来自最近自测记录" onClick={() => onQuickView("practice")} />
       <MetricCard icon={AlertTriangle} label="错题总数" value={wrongQuestions.length} hint="高频薄弱点入口" onClick={() => onQuickView("wrong")} />
-      <MetricCard icon={Sparkles} label="Token 总量" value={formatCompactNumber(aiUsageSummary?.total_tokens ?? 0)} hint="本地计量估算" onClick={() => onQuickView("usage")} />
+      <MetricCard icon={Sparkles} label="Token 总量" value={formatCompactNumber(aiUsageSummary?.total_tokens ?? 0)} hint="查看 AI 用量统计" onClick={() => onQuickView("usage")} />
 
       <section
         className="panel wide clickable-panel"
