@@ -1575,71 +1575,73 @@ function AuthPage({
 
   return (
     <div className="auth-screen">
-      <section className="auth-copy">
-        <div className="brand large">
-          <div className="brand-mark">
-            <Sparkles size={28} />
+      <div className="auth-page-content">
+        <section className="auth-copy">
+          <div className="brand large">
+            <div className="brand-mark">
+              <Sparkles size={28} />
+            </div>
+            <div>
+              <strong>AI 智能备考复习平台</strong>
+              <span>注册、登录后进入资料解析、AI 问答、出题、自测、错题和复习计划闭环。</span>
+            </div>
           </div>
+          <div className="hero-phone">
+            <div className="phone-island" />
+            <div className="mini-card blue">上传 TXT 资料</div>
+            <div className="mini-card green">解析后启用 AI 学习</div>
+            <div className="mini-card">沉淀错题并生成复习计划</div>
+          </div>
+        </section>
+
+        <form className="auth-panel" onSubmit={(event) => submitForm(event, mode === "login" ? onLogin : onRegister)}>
           <div>
-            <strong>AI 智能备考复习平台</strong>
-            <span>注册、登录后进入资料解析、AI 问答、出题、自测、错题和复习计划闭环。</span>
+            <p className="eyebrow">{mode === "login" ? "欢迎回来" : "创建学习账号"}</p>
+            <h1>{mode === "login" ? (loginRole === "admin" ? "管理员登录" : "学生登录") : "学生注册"}</h1>
           </div>
-        </div>
-        <div className="hero-phone">
-          <div className="phone-island" />
-          <div className="mini-card blue">上传 TXT 资料</div>
-          <div className="mini-card green">解析后启用 AI 学习</div>
-          <div className="mini-card">沉淀错题并生成复习计划</div>
-        </div>
-      </section>
 
-      <form className="auth-panel" onSubmit={(event) => submitForm(event, mode === "login" ? onLogin : onRegister)}>
-        <div>
-          <p className="eyebrow">{mode === "login" ? "欢迎回来" : "创建学习账号"}</p>
-          <h1>{mode === "login" ? (loginRole === "admin" ? "管理员登录" : "学生登录") : "学生注册"}</h1>
-        </div>
+          {notice ? <NoticeBar notice={notice} onClose={onCloseNotice} /> : null}
+          {loading ? <LoadingBanner /> : null}
 
-        {notice ? <NoticeBar notice={notice} onClose={onCloseNotice} /> : null}
-        {loading ? <LoadingBanner /> : null}
+          {mode === "login" ? (
+            <div className="auth-role-switch" role="tablist" aria-label="登录身份">
+              <button
+                type="button"
+                className={loginRole === "student" ? "active" : ""}
+                onClick={() => setLoginRole("student")}
+              >
+                学生登录
+              </button>
+              <button
+                type="button"
+                className={loginRole === "admin" ? "active" : ""}
+                onClick={() => setLoginRole("admin")}
+              >
+                管理员登录
+              </button>
+            </div>
+          ) : null}
+          {mode === "login" ? <input type="hidden" name="login_role" value={loginRole} /> : null}
+          <input name="username" placeholder="用户名" minLength={3} required />
+          <input name="password" type="password" placeholder="密码" minLength={6} required />
+          {mode === "register" ? <input name="display_name" placeholder="昵称（可选）" /> : null}
 
-        {mode === "login" ? (
-          <div className="auth-role-switch" role="tablist" aria-label="登录身份">
-            <button
-              type="button"
-              className={loginRole === "student" ? "active" : ""}
-              onClick={() => setLoginRole("student")}
-            >
-              学生登录
-            </button>
-            <button
-              type="button"
-              className={loginRole === "admin" ? "active" : ""}
-              onClick={() => setLoginRole("admin")}
-            >
-              管理员登录
-            </button>
-          </div>
-        ) : null}
-        {mode === "login" ? <input type="hidden" name="login_role" value={loginRole} /> : null}
-        <input name="username" placeholder="用户名" minLength={3} required />
-        <input name="password" type="password" placeholder="密码" minLength={6} required />
-        {mode === "register" ? <input name="display_name" placeholder="昵称（可选）" /> : null}
-
-        <button className="primary-button" type="submit" disabled={loading}>
-          <UserCircle size={16} />
-          {mode === "login" ? "登录并同步数据" : "注册并登录"}
-        </button>
-        <button
-          className="ghost-button"
-          type="button"
-          onClick={() => {
-            setMode(mode === "login" ? "register" : "login");
-            setLoginRole("student");
-          }}
-        >
-          {mode === "login" ? "没有账号？创建新账号" : "已有账号？返回登录"}
-        </button>
-      </form>
+          <button className="primary-button" type="submit" disabled={loading}>
+            <UserCircle size={16} />
+            {mode === "login" ? "登录并同步数据" : "注册并登录"}
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={() => {
+              setMode(mode === "login" ? "register" : "login");
+              setLoginRole("student");
+            }}
+          >
+            {mode === "login" ? "没有账号？创建新账号" : "已有账号？返回登录"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
