@@ -20,7 +20,7 @@
 ```text
 前端构建：npm run build 通过
 后端边界测试：62 passed
-后端健康检查：http://localhost:8000/health 正常
+后端健康检查：https://localhost/api/health 正常
 前端页面：http://127.0.0.1:5173/ 正常
 ```
 
@@ -49,6 +49,7 @@
 
 - Docker
 - Docker Compose
+- Caddy HTTPS 入口
 
 ## 目录结构
 
@@ -109,7 +110,7 @@ AI_MODEL=qwen/qwen3-30b-a3b-instruct-2507
 AI_TIMEOUT_SECONDS=60
 ```
 
-## 启动后端
+## 启动 Docker HTTPS 环境
 
 在项目根目录执行：
 
@@ -123,31 +124,52 @@ docker compose up --build -d
 docker compose exec api alembic upgrade heads
 ```
 
-后端地址：
+HTTPS 访问入口：
 
 ```text
-http://localhost:8000
+https://localhost
 ```
 
-Swagger 文档：
+Caddy 使用本地内置 CA 签发证书，首次访问时浏览器可能提示证书不受信任。可以先临时继续访问，也可以导出本地 CA 根证书后导入系统或浏览器信任列表：
+
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-local-root.crt
+```
+
+如需在内网主机名下访问，可在 `.env` 中配置：
 
 ```text
-http://localhost:8000/docs
+CADDY_SITE_ADDRESS=https://你的内网主机名
+```
+
+然后重新构建并启动：
+
+```bash
+docker compose up --build -d
+```
+
+API 地址通过 Caddy 统一挂载到 `/api`：
+
+```text
+https://localhost/api
+https://localhost/api/docs
 ```
 
 健康检查：
 
 ```bash
-curl http://localhost:8000/health
-curl http://localhost:8000/health/db
-curl http://localhost:8000/health/redis
+curl -k https://localhost/api/health
+curl -k https://localhost/api/health/db
+curl -k https://localhost/api/health/redis
 ```
 
 Windows PowerShell 也可以使用：
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing http://localhost:8000/health
+Invoke-WebRequest -SkipCertificateCheck -UseBasicParsing https://localhost/api/health
 ```
+
+默认 Docker 环境不再直接暴露 API、PostgreSQL、Redis 端口到宿主机，外部入口统一走 Caddy 的 80/443。这样登录密码、Bearer token 和资料内容会在浏览器到 Caddy 的链路上通过 HTTPS 加密传输；数据库中仍只保存 bcrypt 哈希后的密码。
 
 ## 启动前端
 
@@ -170,6 +192,14 @@ npm run dev
 http://127.0.0.1:5173/
 ```
 
+本地开发模式下，Vite 会继续把 `/api` 代理到 `localhost:8000`。如果需要使用该开发代理，请叠加开发端口配置启动：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+```
+
+Docker HTTPS 环境推荐直接访问 `https://localhost`。
+
 构建前端：
 
 ```bash
@@ -184,12 +214,26 @@ npm run preview
 
 ## 一键启动建议
 
-推荐开发时开启两个终端：
+推荐使用 Docker HTTPS 环境：
+
+```bash
+docker compose up --build -d
+docker compose exec api alembic upgrade heads
+```
+
+然后访问：
+
+```text
+应用入口：https://localhost
+接口文档：https://localhost/api/docs
+```
+
+如需前端热更新开发，可开启两个终端：
 
 终端 1：
 
 ```bash
-docker compose up --build -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 docker compose exec api alembic upgrade heads
 ```
 
@@ -205,7 +249,7 @@ npm run dev
 
 ```text
 前端：http://127.0.0.1:5173/
-后端文档：http://localhost:8000/docs
+HTTPS 入口：https://localhost
 ```
 
 ## 核心业务流程
@@ -340,7 +384,7 @@ GET  /admin/logs
 注册：
 
 ```bash
-curl -X POST http://localhost:8000/auth/register \
+curl -k -X POST https://localhost/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username": "student1", "password": "123456", "display_name": "学生1"}'
 ```
@@ -348,7 +392,7 @@ curl -X POST http://localhost:8000/auth/register \
 登录：
 
 ```bash
-curl -X POST http://localhost:8000/auth/login \
+curl -k -X POST https://localhost/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "student1", "password": "123456"}'
 ```
@@ -362,7 +406,7 @@ TOKEN='粘贴 access_token'
 创建学习目标：
 
 ```bash
-curl -X POST http://localhost:8000/study-targets \
+curl -k -X POST https://localhost/api/study-targets \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -377,7 +421,7 @@ curl -X POST http://localhost:8000/study-targets \
 上传资料：
 
 ```bash
-curl -X POST http://localhost:8000/materials \
+curl -k -X POST https://localhost/api/materials \
   -H "Authorization: Bearer $TOKEN" \
   -F "target_id=1" \
   -F "file=@docs/temp/test_materials/test.txt"
@@ -386,14 +430,14 @@ curl -X POST http://localhost:8000/materials \
 查看资料：
 
 ```bash
-curl "http://localhost:8000/materials?target_id=1" \
+curl -k "https://localhost/api/materials?target_id=1" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 生成知识图谱：
 
 ```bash
-curl -X POST http://localhost:8000/knowledge-graphs/generate \
+curl -k -X POST https://localhost/api/knowledge-graphs/generate \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"target_id": 1}'
@@ -402,7 +446,7 @@ curl -X POST http://localhost:8000/knowledge-graphs/generate \
 提交 AI 问答：
 
 ```bash
-curl -X POST http://localhost:8000/qa/ask \
+curl -k -X POST https://localhost/api/qa/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"material_id": 1, "question": "这份资料的主要内容是什么？"}'
