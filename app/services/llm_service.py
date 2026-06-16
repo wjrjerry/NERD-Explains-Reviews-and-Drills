@@ -179,6 +179,7 @@ def chat_completion(
     task: str = "unknown",
     timeout_seconds: int | None = None,
     max_tokens: int | None = None,
+    response_format_json: bool = False,
 ) -> str:
     """Call a Chat Completions compatible API and return assistant text."""
     api_key, base_url, model = _require_real_ai_settings()
@@ -203,6 +204,8 @@ def chat_completion(
     }
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if response_format_json:
+        payload["response_format"] = {"type": "json_object"}
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
         url,

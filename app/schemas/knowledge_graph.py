@@ -11,6 +11,10 @@ class KnowledgeGraphGenerateRequest(BaseModel):
     """Request body for generating a target-level knowledge graph."""
 
     target_id: int = Field(description="Study target ID.")
+    material_id: int | None = Field(
+        default=None,
+        description="Optional parsed material ID for incremental graph refresh.",
+    )
     force_regenerate: bool = Field(
         default=False,
         description="Replace existing graph if one already exists.",

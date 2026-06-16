@@ -13,6 +13,7 @@ from app.repositories.knowledge_graph_repository import (
     KnowledgeGraphRepository,
     KnowledgePointCreateData,
 )
+from app.repositories.knowledge_repository import KnowledgeRepository
 from app.repositories.material_repository import MaterialRepository
 from app.repositories.study_target_repository import StudyTargetRepository
 from app.schemas.knowledge_graph import (
@@ -22,6 +23,8 @@ from app.schemas.knowledge_graph import (
     KnowledgePointNode,
 )
 from app.services import ai_service, ai_usage_service
+
+GRAPH_INPUT_MAX_CHARS = 12000
 
 
 def _clamp_weight(value: object) -> float:
@@ -109,16 +112,116 @@ def _normalize_graph_points(
     return normalized
 
 
-def _materials_for_ai(materials: list[Material]) -> list[dict[str, object]]:
-    """Build compact material payloads for knowledge graph generation."""
-    return [
-        {
-            "material_id": material.id,
-            "title": material.original_filename,
-            "parsed_text": material.parsed_text or "",
-        }
-        for material in materials
+def _extraction_text_for_ai(extraction) -> str:
+    parts = [
+        f"摘要：{extraction.summary}",
+        "提纲：" + "；".join(str(item) for item in extraction.outline),
+        "关键词：" + "；".join(str(item) for item in extraction.keywords),
+        "复习重点：" + "；".join(str(item) for item in extraction.key_points),
+        "可能考点：" + "；".join(str(item) for item in extraction.exam_points),
     ]
+    return "\n".join(part for part in parts if part.strip("：； \n"))
+
+
+def _string_items(value: object, *, limit: int | None = None) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items = [str(item).strip() for item in value if str(item).strip()]
+    return items[:limit] if limit is not None else items
+
+
+def _fallback_graph_points_from_extractions(
+    materials: list[Material],
+    *,
+    extraction_by_material_id: dict[int, object],
+    max_points: int,
+) -> list[dict[str, object]]:
+    """Build a conservative graph from completed material extractions."""
+    points: list[dict[str, object]] = []
+    seen_names: set[str] = set()
+
+    for material in materials:
+        extraction = extraction_by_material_id.get(material.id)
+        if extraction is None:
+            continue
+        candidate_names = [
+            *_string_items(getattr(extraction, "keywords", []), limit=8),
+            *_string_items(getattr(extraction, "outline", []), limit=4),
+        ]
+        descriptions = [
+            *_string_items(getattr(extraction, "key_points", [])),
+            *_string_items(getattr(extraction, "exam_points", [])),
+        ]
+        summary = str(getattr(extraction, "summary", "") or "").strip()
+
+        for raw_name in candidate_names:
+            name = raw_name.strip(" ，,。.；;：:")
+            if len(name) < 2 or len(name) > 60:
+                continue
+            key = _normalize_point_name_for_merge(name)
+            if not key or key in seen_names:
+                continue
+            seen_names.add(key)
+
+            description = next(
+                (item for item in descriptions if name.casefold() in item.casefold()),
+                descriptions[len(points) % len(descriptions)] if descriptions else summary,
+            )
+            snippet = _matching_material_snippet(material.parsed_text or "", [name])
+            if snippet is None:
+                snippet = (description or summary or name)[:500]
+            points.append(
+                {
+                    "name": name,
+                    "existing_name": None,
+                    "description": description[:240] if description else summary[:240],
+                    "importance_weight": 0.72,
+                    "parent_name": None,
+                    "level": 2,
+                    "sort_order": len(points) + 1,
+                    "evidence": [
+                        {
+                            "material_id": material.id,
+                            "snippet": snippet,
+                            "relevance_score": 0.72,
+                        }
+                    ],
+                }
+            )
+            if len(points) >= max_points:
+                return points
+
+    return points
+
+
+def _materials_for_ai(
+    materials: list[Material],
+    *,
+    extraction_by_material_id: dict[int, object] | None = None,
+) -> list[dict[str, object]]:
+    """Build compact material payloads for knowledge graph generation."""
+    payload: list[dict[str, object]] = []
+    extraction_by_material_id = extraction_by_material_id or {}
+    remaining_chars = GRAPH_INPUT_MAX_CHARS
+    for material in materials:
+        if remaining_chars <= 0:
+            break
+        extraction = extraction_by_material_id.get(material.id)
+        text = (
+            _extraction_text_for_ai(extraction)
+            if extraction is not None
+            else material.parsed_text or ""
+        )
+        clipped = text[:remaining_chars]
+        remaining_chars -= len(clipped)
+        payload.append(
+            {
+                "material_id": material.id,
+                "title": material.original_filename,
+                "parsed_text": clipped,
+            }
+        )
+    return payload
 
 
 def _existing_points_for_ai(points) -> list[dict[str, object]]:
@@ -298,6 +401,61 @@ def _enrich_material_evidence(
     return enriched
 
 
+def _append_existing_points_for_material_links(
+    points: list[KnowledgePointCreateData],
+    *,
+    existing_points: list[KnowledgePoint],
+    material: Material,
+) -> list[KnowledgePointCreateData]:
+    """Add existing points that match the current material so sync creates links."""
+    existing_by_id = {point.id: point for point in existing_points}
+    included_names = {
+        KnowledgeGraphRepository._normalize_point_name(point.name) for point in points
+    }
+    appended = list(points)
+
+    for point in existing_points:
+        key = KnowledgeGraphRepository._normalize_point_name(point.name)
+        if key in included_names:
+            continue
+
+        candidate = KnowledgePointCreateData(
+            name=point.name,
+            description=point.description,
+            importance_weight=point.importance_weight,
+            parent_name=existing_by_id.get(point.parent_id).name if point.parent_id in existing_by_id else None,
+            level=point.level,
+            sort_order=point.sort_order,
+            evidence=[],
+        )
+        snippet = _matching_material_snippet(
+            material.parsed_text or "",
+            _point_match_terms(candidate),
+        )
+        if snippet is None:
+            continue
+        appended.append(
+            KnowledgePointCreateData(
+                name=candidate.name,
+                description=candidate.description,
+                importance_weight=candidate.importance_weight,
+                parent_name=candidate.parent_name,
+                level=candidate.level,
+                sort_order=candidate.sort_order,
+                evidence=[
+                    {
+                        "material_id": material.id,
+                        "snippet": snippet,
+                        "relevance_score": 0.75,
+                    }
+                ],
+            )
+        )
+        included_names.add(key)
+
+    return appended
+
+
 async def _lock_target_graph_generation(db: AsyncSession, *, target_id: int) -> bool:
     """Serialize graph updates per target to avoid duplicate nodes from races."""
     bind = db.get_bind()
@@ -347,36 +505,71 @@ class KnowledgeGraphService:
                 user_id=current_user.id,
                 target_id=payload.target_id,
             )
-            if existing and not payload.force_regenerate:
+            if existing and not payload.force_regenerate and payload.material_id is None:
                 return await KnowledgeGraphService.get_graph(
                     db,
                     current_user=current_user,
                     target_id=payload.target_id,
                 )
 
-            materials = await MaterialRepository.list_parsed_by_target(
+            focus_material: Material | None = None
+            if payload.material_id is not None:
+                focus_material = await MaterialRepository.get_by_id(
+                    db,
+                    material_id=payload.material_id,
+                    user_id=current_user.id,
+                )
+                if focus_material is None or focus_material.target_id != payload.target_id:
+                    raise ValueError("资料不存在或不属于当前目标")
+                if focus_material.parse_status.value != "parsed" or not (focus_material.parsed_text or "").strip():
+                    raise ValueError("资料尚未解析完成或没有可用于图谱的文本")
+                materials = [focus_material]
+            else:
+                materials = await MaterialRepository.list_parsed_by_target(
+                    db,
+                    user_id=current_user.id,
+                    target_id=payload.target_id,
+                )
+            if not materials:
+                raise ValueError("该目标下暂无已解析资料，无法生成知识图谱")
+
+            material_extractions = await KnowledgeRepository.list_latest_material_extractions_by_target(
                 db,
                 user_id=current_user.id,
                 target_id=payload.target_id,
             )
-            if not materials:
-                raise ValueError("该目标下暂无已解析资料，无法生成知识图谱")
-
+            extraction_by_material_id = {
+                extraction.material_id: extraction
+                for extraction in material_extractions
+                if extraction.material_id is not None
+            }
             ai_usage_service.clear_pending_traces()
             try:
                 ai_result = ai_service.generate_knowledge_graph(
                     target_title=target.title,
                     subject=target.subject,
-                    materials=_materials_for_ai(materials),
+                    materials=_materials_for_ai(
+                        materials,
+                        extraction_by_material_id=extraction_by_material_id,
+                    ),
                     existing_points=_existing_points_for_ai(existing),
                     max_points=payload.max_points,
                 )
+            except Exception:
+                fallback_points = _fallback_graph_points_from_extractions(
+                    materials,
+                    extraction_by_material_id=extraction_by_material_id,
+                    max_points=payload.max_points,
+                )
+                if not fallback_points:
+                    raise
+                ai_result = {"points": fallback_points, "merges": []}
             finally:
                 await ai_usage_service.record_pending_traces(
                     db,
                     user_id=current_user.id,
                     target_id=payload.target_id,
-                    material_id=None,
+                    material_id=payload.material_id,
                 )
             raw_points = ai_result.get("points", [])
             if not isinstance(raw_points, list):
@@ -389,6 +582,12 @@ class KnowledgeGraphService:
                 existing_point_names={point.name for point in existing},
             )
             normalized_points = _enrich_material_evidence(normalized_points, materials)
+            if focus_material is not None and existing:
+                normalized_points = _append_existing_points_for_material_links(
+                    normalized_points,
+                    existing_points=existing,
+                    material=focus_material,
+                )
             synced_points = await KnowledgeGraphRepository.sync_graph_for_target(
                 db,
                 user_id=current_user.id,

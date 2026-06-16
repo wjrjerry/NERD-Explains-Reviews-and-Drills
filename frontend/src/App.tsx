@@ -37,6 +37,7 @@ import type {
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgeJob,
   KnowledgeMasteryStatus,
   KnowledgePointMaterialItem,
   KnowledgePointReference,
@@ -83,6 +84,8 @@ type Notice = {
 
 type LoginRole = "student" | "admin";
 
+type AiPendingAction = "qa" | "questions" | "test" | "plan" | null;
+
 type MaterialSourcePreview = {
   materialId: number;
   url: string;
@@ -127,6 +130,12 @@ const parseStatusText: Record<Material["parse_status"], string> = {
 
 const parsePollMaxAttempts = 30;
 const parsePollIntervalMs = 2500;
+const knowledgeJobPollMaxAttempts = 45;
+const knowledgeJobPollIntervalMs = 2000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function getParseActionText(status: Material["parse_status"]) {
   if (status === "parsing") return "解析中";
@@ -169,6 +178,7 @@ function App() {
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
   const [targetKnowledge, setTargetKnowledge] = useState<KnowledgeResult | null>(null);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [activeKnowledgeJob, setActiveKnowledgeJob] = useState<KnowledgeJob | null>(null);
   const [graphMaterialKnowledgeLoading, setGraphMaterialKnowledgeLoading] = useState(false);
   const [graphMaterialKnowledgeError, setGraphMaterialKnowledgeError] = useState<string | null>(null);
   const [structured, setStructured] = useState<MaterialStructured | null>(null);
@@ -188,6 +198,7 @@ function App() {
   const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
   const [questionBatchContext, setQuestionBatchContext] = useState<QuestionBatchContext | null>(null);
   const [knowledgeRefreshing, setKnowledgeRefreshing] = useState(false);
+  const [aiPendingAction, setAiPendingAction] = useState<AiPendingAction>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const parsePollAttemptsRef = useRef<Map<number, number>>(new Map());
@@ -538,7 +549,7 @@ function App() {
 
     const [graphData, extractionData] = await Promise.all([
       api.getKnowledgeGraph(material.target_id).catch(() => null),
-      api.extractKnowledge({ target_id: material.target_id, force_regenerate: false }).catch(() => null)
+      api.getLatestKnowledge({ targetId: material.target_id }).catch(() => null)
     ]);
 
     if (selectedTargetId === material.target_id || selectedMaterialId === material.id) {
@@ -552,6 +563,72 @@ function App() {
       if (refreshedMaterialExtraction) {
         setKnowledge(refreshedMaterialExtraction);
       }
+    }
+
+    let job = await api
+      .getLatestKnowledgeJob({
+        targetId: material.target_id,
+        materialId: material.id,
+        jobType: "target_refresh_pipeline"
+      })
+      .catch(() => null);
+    if (!job) {
+      job = await api
+        .getLatestKnowledgeJob({
+          targetId: material.target_id,
+          jobType: "target_refresh_pipeline"
+        })
+        .catch(() => null);
+    }
+    if (job && (job.status === "pending" || job.status === "running")) {
+      void waitForKnowledgeJob(job, {
+        targetId: material.target_id,
+        materialId: material.id,
+        successMessage: "知识提炼和图谱刷新已完成。"
+      });
+    }
+  }
+
+  async function refreshKnowledgeViews(targetId: number, materialId?: number | null) {
+    const [graphData, targetExtraction, materialExtraction] = await Promise.all([
+      api.getKnowledgeGraph(targetId).catch(() => null),
+      api.getLatestKnowledge({ targetId }).catch(() => null),
+      materialId ? api.getLatestKnowledge({ materialId }).catch(() => null) : Promise.resolve(null)
+    ]);
+    setKnowledgeGraph(targetExtraction?.knowledge_graph ?? graphData);
+    if (targetExtraction) {
+      setTargetKnowledge(targetExtraction);
+    }
+    if (materialExtraction) {
+      setKnowledge(materialExtraction);
+    }
+  }
+
+  async function waitForKnowledgeJob(
+    initialJob: KnowledgeJob,
+    options: { targetId: number; materialId?: number | null; successMessage?: string }
+  ) {
+    setActiveKnowledgeJob(initialJob);
+    setKnowledgeRefreshing(true);
+    let currentJob = initialJob;
+    try {
+      for (let attempt = 0; attempt < knowledgeJobPollMaxAttempts; attempt += 1) {
+        currentJob = await api.getKnowledgeJob(initialJob.id);
+        setActiveKnowledgeJob(currentJob);
+        if (currentJob.status === "succeeded") {
+          await refreshKnowledgeViews(options.targetId, options.materialId);
+          setNotice({ tone: "success", text: options.successMessage ?? "知识任务已完成，图谱已刷新。" });
+          return currentJob;
+        }
+        if (currentJob.status === "failed") {
+          throw new Error(currentJob.error_message ?? "知识任务执行失败");
+        }
+        await sleep(knowledgeJobPollIntervalMs);
+      }
+      setNotice({ tone: "warning", text: "知识任务仍在后台执行，可稍后刷新查看结果。" });
+      return currentJob;
+    } finally {
+      setKnowledgeRefreshing(false);
     }
   }
 
@@ -579,8 +656,8 @@ function App() {
         setNotice({
           tone: data.material.parse_warning ? "warning" : "success",
           text: data.material.parse_warning
-            ? "资料解析完成，但解析质量可能影响 AI 回答和出题。"
-            : "资料解析完成，结构化内容和知识图谱已刷新。"
+            ? "资料解析完成，已提交知识刷新任务；解析质量可能影响 AI 回答和出题。"
+            : "资料解析完成，已提交知识提炼和图谱刷新任务。"
         });
       } else if (data.material.parse_status === "failed") {
         parsePollAttemptsRef.current.delete(materialId);
@@ -750,8 +827,8 @@ function App() {
         setNotice({
           tone: data.material.parse_warning ? "warning" : "success",
           text: data.material.parse_warning
-            ? "资料解析完成，但解析质量可能影响 AI 回答和出题。"
-            : "资料解析完成，结构化内容和知识图谱已刷新。"
+            ? "资料解析完成，已提交知识刷新任务；解析质量可能影响 AI 回答和出题。"
+            : "资料解析完成，已提交知识提炼和图谱刷新任务。"
         });
       } else if (data.material.parse_status === "failed") {
         setNotice({ tone: "danger", text: data.material.parse_error ?? "资料解析失败。" });
@@ -780,17 +857,25 @@ function App() {
     }
 
     setKnowledgeRefreshing(true);
-    setNotice({ tone: "info", text: "正在更新资料知识提炼和目标图谱..." });
+    setNotice({ tone: "info", text: "已提交资料知识提炼和图谱刷新任务..." });
     try {
-      const materialData = await api.extractKnowledge({ materialId: selectedMaterial.id });
-      const targetData = await api.extractKnowledge({ targetId: selectedMaterial.target_id, forceRegenerate: true });
-      setKnowledge(materialData);
-      setTargetKnowledge(targetData);
-      setKnowledgeGraph(
-        targetData.knowledge_graph ??
-          (await api.getKnowledgeGraph(selectedMaterial.target_id).catch(() => null))
+      const materialJob = await api.createMaterialExtractJob(selectedMaterial.id);
+      await waitForKnowledgeJob(materialJob, {
+        targetId: selectedMaterial.target_id,
+        materialId: selectedMaterial.id,
+        successMessage: "资料级知识提炼已完成。"
+      });
+      const graphJob = await api.createGraphRefreshJob(
+        selectedMaterial.target_id,
+        selectedMaterial.id,
+        true,
+        30
       );
-      setNotice({ tone: "success", text: "知识提炼和图谱已更新。" });
+      await waitForKnowledgeJob(graphJob, {
+        targetId: selectedMaterial.target_id,
+        materialId: selectedMaterial.id,
+        successMessage: "资料知识提炼和图谱增量刷新已完成。"
+      });
     } catch (error) {
       setNotice({ tone: "danger", text: `知识提炼失败：${readMessage(error)}` });
     } finally {
@@ -800,9 +885,15 @@ function App() {
 
   async function handleAskQuestion(formData: FormData) {
     const scope = String(formData.get("qa_scope") ?? "target");
-    const knowledgePointId = Number(formData.get("knowledge_point_id")) || undefined;
+    const knowledgePointIds =
+      scope === "knowledge_point"
+        ? formData.getAll("knowledge_point_ids").map(Number).filter(Boolean)
+        : [];
     const question = String(formData.get("question") ?? "").trim();
     if (!question) {
+      return;
+    }
+    if (aiPendingAction) {
       return;
     }
 
@@ -815,21 +906,27 @@ function App() {
       return;
     }
 
+    setAiPendingAction("qa");
     try {
       const data = await api.askQuestion(
         scope === "material"
           ? { materialId: selectedMaterial?.id, question }
-          : { targetId: selectedTargetId ?? undefined, knowledgePointId, question }
+          : { targetId: selectedTargetId ?? undefined, knowledgePointIds, question }
       );
       setQaRecords((current) => [data, ...current]);
       setNotice({ tone: "success", text: "问答已生成并写入历史。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `问答失败：${readMessage(error)}` });
+    } finally {
+      setAiPendingAction((current) => (current === "qa" ? null : current));
     }
   }
 
   async function handleGenerateQuestions(formData: FormData) {
     const scope = String(formData.get("question_scope") ?? "target");
+    if (aiPendingAction) {
+      return;
+    }
     try {
       const difficulty = String(formData.get("difficulty") ?? "medium") as Difficulty;
       const count = Number(formData.get("count") ?? 5);
@@ -849,6 +946,7 @@ function App() {
         return;
       }
 
+      setAiPendingAction("questions");
       setQuestionBatchContext(null);
       const data = await api.generateQuestions({
         materialId: scope === "material" ? selectedMaterial?.id : undefined,
@@ -876,6 +974,8 @@ function App() {
       setNotice({ tone: "success", text: scope === "material" ? "题目已按资料生成。" : "题目已按目标/知识点生成。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `题目生成失败：${readMessage(error)}` });
+    } finally {
+      setAiPendingAction((current) => (current === "questions" ? null : current));
     }
   }
 
@@ -884,6 +984,10 @@ function App() {
       setNotice({ tone: "danger", text: "请先生成题目，再提交自测。" });
       return;
     }
+    if (aiPendingAction) {
+      return;
+    }
+    setAiPendingAction("test");
     try {
       const data = await api.submitTest(questionBatchContext.materialId, questionBatchContext.targetId, answers);
       setTestResult(data);
@@ -901,6 +1005,8 @@ function App() {
       }
     } catch (error) {
       setNotice({ tone: "danger", text: `自测提交失败：${readMessage(error)}` });
+    } finally {
+      setAiPendingAction((current) => (current === "test" ? null : current));
     }
   }
 
@@ -918,6 +1024,10 @@ function App() {
     const targetId = Number(formData.get("target_id"));
     const startDate = normalizeDateInput(formData.get("start_date")) ?? "";
     const endDate = normalizeDateInput(formData.get("end_date")) ?? "";
+    if (aiPendingAction) {
+      return;
+    }
+    setAiPendingAction("plan");
     try {
       const plan = await api.generateReviewPlan(targetId, startDate, endDate);
       setReviewPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)]);
@@ -925,6 +1035,8 @@ function App() {
       setNotice({ tone: "success", text: "复习计划已生成。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `复习计划生成失败：${readMessage(error)}` });
+    } finally {
+      setAiPendingAction((current) => (current === "plan" ? null : current));
     }
   }
 
@@ -935,16 +1047,24 @@ function App() {
     }
 
     setKnowledgeRefreshing(true);
-    setNotice({ tone: "info", text: "正在重新提炼目标并刷新知识图谱..." });
+    setNotice({ tone: "info", text: "已提交知识图谱刷新任务..." });
     try {
-      const extractionData = await api.extractKnowledge({ targetId: selectedTargetId, forceRegenerate: true });
-      setTargetKnowledge(extractionData);
-      setKnowledgeGraph(
-        extractionData.knowledge_graph ??
-          (await api.getKnowledgeGraph(selectedTargetId).catch(() => null))
+      const focusMaterialId =
+        selectedMaterial?.target_id === selectedTargetId && selectedMaterial.parse_status === "parsed"
+          ? selectedMaterial.id
+          : undefined;
+      const graphJob = await api.createGraphRefreshJob(
+        selectedTargetId,
+        focusMaterialId,
+        true,
+        focusMaterialId ? 30 : 12
       );
+      await waitForKnowledgeJob(graphJob, {
+        targetId: selectedTargetId,
+        materialId: focusMaterialId,
+        successMessage: focusMaterialId ? "知识图谱已增量刷新。" : "知识图谱已全量刷新。"
+      });
       setView("graph");
-      setNotice({ tone: "success", text: "目标级知识提炼和知识图谱已刷新。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `知识图谱生成失败：${readMessage(error)}` });
     } finally {
@@ -1214,6 +1334,7 @@ function App() {
             materialKnowledgeLoading={graphMaterialKnowledgeLoading}
             materialKnowledgeError={graphMaterialKnowledgeError}
             knowledgeRefreshing={knowledgeRefreshing}
+            activeKnowledgeJob={activeKnowledgeJob}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onGenerate={handleGenerateKnowledgeGraph}
@@ -1250,9 +1371,16 @@ function App() {
             knowledgePoints={knowledgeGraph?.nodes ?? []}
             focusedKnowledgePoints={focusedKnowledgePoints}
             records={qaRecords}
+            isAsking={aiPendingAction === "qa"}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
-            onSelectFocusPoint={(pointId) => setFocusedKnowledgePointIds([pointId])}
+            onSelectFocusPoint={(pointId) =>
+              setFocusedKnowledgePointIds((current) =>
+                current.includes(pointId)
+                  ? current.filter((id) => id !== pointId)
+                  : [...current, pointId]
+              )
+            }
             onAsk={handleAskQuestion}
             onClearFocus={() => setFocusedKnowledgePointIds([])}
           />
@@ -1269,6 +1397,8 @@ function App() {
             focusedKnowledgePoints={focusedKnowledgePoints}
             questions={questions}
             questionBatchContext={questionBatchContext}
+            isGenerating={aiPendingAction === "questions"}
+            isSubmitting={aiPendingAction === "test"}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onGenerate={handleGenerateQuestions}
@@ -1298,6 +1428,7 @@ function App() {
           <ReviewPlansPage
             targets={targets}
             plans={reviewPlans}
+            isGenerating={aiPendingAction === "plan"}
             onGenerate={handleGenerateReviewPlan}
             onExport={(planId) => void handleExport(() => api.exportReviewPlan(planId), "复习计划已开始下载。")}
           />
@@ -2240,6 +2371,7 @@ function KnowledgeGraphPage({
   materialKnowledgeLoading,
   materialKnowledgeError,
   knowledgeRefreshing,
+  activeKnowledgeJob,
   onSelectTarget,
   onSelectMaterial,
   onGenerate,
@@ -2260,6 +2392,7 @@ function KnowledgeGraphPage({
   materialKnowledgeLoading: boolean;
   materialKnowledgeError: string | null;
   knowledgeRefreshing: boolean;
+  activeKnowledgeJob: KnowledgeJob | null;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
   onGenerate: () => void;
@@ -2409,11 +2542,17 @@ function KnowledgeGraphPage({
         <div className="quick-actions">
           <button disabled={knowledgeRefreshing} onClick={onGenerate}>
             {knowledgeRefreshing ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
-            {knowledgeRefreshing ? "正在刷新" : "重新提炼并刷新图谱"}
+            {knowledgeRefreshing ? "任务执行中" : selectedMaterialId ? "增量刷新图谱" : "全量刷新图谱"}
           </button>
           <button disabled={!target} onClick={onExport}><Download size={16} />导出知识总结</button>
           <button disabled={!target} onClick={onExportAnki}><Download size={16} />导出 Anki CSV</button>
         </div>
+        {activeKnowledgeJob ? (
+          <p className={activeKnowledgeJob.status === "failed" ? "danger-text" : "muted-text"}>
+            知识任务：{activeKnowledgeJob.job_type} / {activeKnowledgeJob.status}
+            {activeKnowledgeJob.error_message ? ` - ${activeKnowledgeJob.error_message}` : ""}
+          </p>
+        ) : null}
         {selectedGraphMaterial ? (
           <p className="form-hint">
             当前按资料筛选：{selectedGraphMaterial.original_filename}。只显示该资料关联知识点及其上级节点。
@@ -2525,6 +2664,7 @@ function QaPage({
   knowledgePoints,
   focusedKnowledgePoints,
   records,
+  isAsking,
   onSelectTarget,
   onSelectMaterial,
   onSelectFocusPoint,
@@ -2540,6 +2680,7 @@ function QaPage({
   knowledgePoints: KnowledgePointReference[];
   focusedKnowledgePoints: KnowledgePointReference[];
   records: QaRecord[];
+  isAsking: boolean;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
   onSelectFocusPoint: (pointId: number) => void;
@@ -2549,7 +2690,7 @@ function QaPage({
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 问答页面。" />;
 
   const defaultScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
-  const selectedFocusId = focusedKnowledgePoints[0]?.id ?? null;
+  const selectedFocusIds = new Set(focusedKnowledgePoints.map((point) => point.id));
 
   return (
     <div className="qa-layout">
@@ -2572,7 +2713,7 @@ function QaPage({
           <div className="knowledge-point-picker">
             <div className="field-label-row">
               <span>聚焦知识点</span>
-              {selectedFocusId ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
+              {focusedKnowledgePoints.length ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
             </div>
             {knowledgePoints.length ? (
               <div className="tag-cloud selectable-tags">
@@ -2580,9 +2721,9 @@ function QaPage({
                   <button
                     key={point.id}
                     type="button"
-                    className={selectedFocusId === point.id ? "selected" : ""}
+                    className={selectedFocusIds.has(point.id) ? "selected" : ""}
                     onClick={() => onSelectFocusPoint(point.id)}
-                    title={`按「${point.name}」聚焦问答`}
+                    title={`添加或移除「${point.name}」`}
                   >
                     {point.name}
                   </button>
@@ -2593,16 +2734,20 @@ function QaPage({
             )}
           </div>
         ) : null}
-        <select name="qa_scope" key={`${defaultScope}-${selectedFocusId ?? "none"}`} defaultValue={defaultScope}>
+        <select name="qa_scope" key={`${defaultScope}-${focusedKnowledgePoints.map((point) => point.id).join("-") || "none"}`} defaultValue={defaultScope}>
           <option value="target" disabled={!target}>目标范围</option>
-          <option value="knowledge_point" disabled={!target || !selectedFocusId}>聚焦知识点</option>
+          <option value="knowledge_point" disabled={!target || !focusedKnowledgePoints.length}>聚焦知识点</option>
           <option value="material" disabled={material?.parse_status !== "parsed"}>当前资料</option>
         </select>
-        {selectedFocusId ? <input type="hidden" name="knowledge_point_id" value={selectedFocusId} /> : null}
+        {focusedKnowledgePoints.map((point) => (
+          <input key={point.id} type="hidden" name="knowledge_point_ids" value={point.id} />
+        ))}
         <textarea name="question" placeholder="提出你的问题，可围绕目标、资料或选中的知识点" required />
-        <button className="primary-button" type="submit">
-          <MessageSquare size={16} />提交问题
+        <button className="primary-button" type="submit" disabled={isAsking}>
+          {isAsking ? <LoaderCircle className="spin-icon" size={16} /> : <MessageSquare size={16} />}
+          {isAsking ? "思考中" : "提交问题"}
         </button>
+        {isAsking ? <InlineThinking text="正在根据上下文组织回答..." /> : null}
       </form>
 
       <section className="panel">
@@ -2637,6 +2782,8 @@ function PracticePage({
   focusedKnowledgePoints,
   questions,
   questionBatchContext,
+  isGenerating,
+  isSubmitting,
   onSelectTarget,
   onSelectMaterial,
   onGenerate,
@@ -2652,6 +2799,8 @@ function PracticePage({
   focusedKnowledgePoints: KnowledgePointReference[];
   questions: Question[];
   questionBatchContext: QuestionBatchContext | null;
+  isGenerating: boolean;
+  isSubmitting: boolean;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
   onGenerate: (formData: FormData) => void;
@@ -2828,13 +2977,16 @@ function PracticePage({
           </div>
         ) : null}
         <div className="toolbar-actions">
-          <button className="primary-button" type="submit">
-            <Sparkles size={16} />生成题目
+          <button className="primary-button" type="submit" disabled={isGenerating || isSubmitting}>
+            {isGenerating ? <LoaderCircle className="spin-icon" size={16} /> : <Sparkles size={16} />}
+            {isGenerating ? "生成中" : "生成题目"}
           </button>
-          <button className="ghost-button" type="button" disabled={!questions.length || !questionBatchContext} onClick={() => onSubmit(submitAnswers)}>
-            提交自测
+          <button className="ghost-button" type="button" disabled={!questions.length || !questionBatchContext || isGenerating || isSubmitting} onClick={() => onSubmit(submitAnswers)}>
+            {isSubmitting ? "评分中" : "提交自测"}
           </button>
         </div>
+        {isGenerating ? <InlineThinking text="正在生成题目和提示..." /> : null}
+        {isSubmitting ? <InlineThinking text="正在提交答案并分析错题..." /> : null}
       </form>
       {questionBatchContext ? (
         <p className="muted-text">
@@ -3049,11 +3201,13 @@ function WrongQuestionsPage({
 function ReviewPlansPage({
   targets,
   plans,
+  isGenerating,
   onGenerate,
   onExport
 }: {
   targets: StudyTarget[];
   plans: ReviewPlan[];
+  isGenerating: boolean;
   onGenerate: (formData: FormData) => void;
   onExport: (planId: number) => void;
 }) {
@@ -3064,9 +3218,13 @@ function ReviewPlansPage({
         <select name="target_id" defaultValue={targets[0]?.id}>
           {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
         </select>
-        <input name="start_date" placeholder="开始日期，如 2026年06月16日" required />
-        <input name="end_date" placeholder="结束日期，如 2026年07月01日" required />
-        <button className="primary-button" type="submit"><CalendarDays size={16} />生成计划</button>
+        <input name="start_date" type="date" required />
+        <input name="end_date" type="date" required />
+        <button className="primary-button" type="submit" disabled={isGenerating}>
+          {isGenerating ? <LoaderCircle className="spin-icon" size={16} /> : <CalendarDays size={16} />}
+          {isGenerating ? "规划中" : "生成计划"}
+        </button>
+        {isGenerating ? <InlineThinking text="正在根据错题和薄弱点生成复习计划..." /> : null}
       </form>
 
       <section className="panel">
@@ -3236,6 +3394,15 @@ function EmptyPanel({ text }: { text: string }) {
     <section className="panel">
       <p className="muted-text">{text}</p>
     </section>
+  );
+}
+
+function InlineThinking({ text }: { text: string }) {
+  return (
+    <p className="inline-thinking">
+      <LoaderCircle className="spin-icon" size={16} />
+      <span>{text}</span>
+    </p>
   );
 }
 

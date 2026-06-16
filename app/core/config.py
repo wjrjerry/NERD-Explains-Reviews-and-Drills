@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     database_url: str
     redis_url: str
+    celery_broker_url: str | None = None
+    celery_result_backend: str | None = None
+    celery_task_always_eager: bool = False
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
@@ -86,6 +89,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings()

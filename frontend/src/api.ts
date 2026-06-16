@@ -6,6 +6,8 @@ import type {
   AiUsageSummary,
   Difficulty,
   HealthStatus,
+  KnowledgeJob,
+  KnowledgeJobType,
   KnowledgeGraph,
   KnowledgeMasteryStatus,
   KnowledgePointMastery,
@@ -41,14 +43,15 @@ type Pagination<T> = {
 
 type KnowledgeExtractScope =
   | { materialId: number; targetId?: never; forceRegenerate?: never }
-  | { targetId: number; materialId?: never; forceRegenerate?: boolean }
+  | { targetId: number; materialId?: number; forceRegenerate?: boolean }
   | { material_id: number; target_id?: never; force_regenerate?: never }
-  | { target_id: number; material_id?: never; force_regenerate?: boolean };
+  | { target_id: number; material_id?: number; force_regenerate?: boolean };
 
 type QaScope = {
   materialId?: number;
   targetId?: number;
   knowledgePointId?: number;
+  knowledgePointIds?: number[];
   question: string;
 };
 
@@ -258,7 +261,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(
         "targetId" in scope
-          ? { target_id: scope.targetId, force_regenerate: scope.forceRegenerate ?? true }
+          ? { target_id: scope.targetId, material_id: scope.materialId, force_regenerate: scope.forceRegenerate ?? true }
           : "materialId" in scope
             ? { material_id: scope.materialId }
             : scope
@@ -271,11 +274,40 @@ export const api = {
         : `/knowledge/latest${buildQuery({ scope: "material", material_id: scope.materialId })}`
     ),
   getKnowledgeGraph: (targetId: number) => request<KnowledgeGraph>(`/knowledge-graphs/${targetId}`),
-  generateKnowledgeGraph: (targetId: number, maxPoints = 20) =>
+  generateKnowledgeGraph: (targetId: number, maxPoints = 20, materialId?: number) =>
     request<KnowledgeGraph>("/knowledge-graphs/generate", {
       method: "POST",
-      body: JSON.stringify({ target_id: targetId, force_regenerate: true, max_points: maxPoints })
+      body: JSON.stringify({ target_id: targetId, material_id: materialId, force_regenerate: true, max_points: maxPoints })
     }),
+  createMaterialExtractJob: (materialId: number) =>
+    request<KnowledgeJob>("/knowledge-jobs/material-extract", {
+      method: "POST",
+      body: JSON.stringify({ material_id: materialId })
+    }),
+  createTargetExtractJob: (targetId: number, forceRegenerate = true) =>
+    request<KnowledgeJob>("/knowledge-jobs/target-extract", {
+      method: "POST",
+      body: JSON.stringify({ target_id: targetId, force_regenerate: forceRegenerate })
+    }),
+  createGraphRefreshJob: (targetId: number, materialId?: number, forceRegenerate = true, maxPoints = 12) =>
+    request<KnowledgeJob>("/knowledge-jobs/graph-refresh", {
+      method: "POST",
+      body: JSON.stringify({
+        target_id: targetId,
+        material_id: materialId,
+        force_regenerate: forceRegenerate,
+        max_points: maxPoints
+      })
+    }),
+  getKnowledgeJob: (jobId: number) => request<KnowledgeJob>(`/knowledge-jobs/${jobId}`),
+  getLatestKnowledgeJob: (scope: { targetId?: number; materialId?: number; jobType?: KnowledgeJobType }) =>
+    request<KnowledgeJob | null>(
+      `/knowledge-jobs/latest${buildQuery({
+        target_id: scope.targetId,
+        material_id: scope.materialId,
+        job_type: scope.jobType
+      })}`
+    ),
   listKnowledgePointMaterials: (knowledgePointId: number) =>
     request<KnowledgePointMaterials>(`/knowledge-points/${knowledgePointId}/materials`),
   listKnowledgePointQuestions: (knowledgePointId: number, page = 1, pageSize = 10) =>
@@ -297,6 +329,7 @@ export const api = {
         material_id: scope.materialId,
         target_id: scope.targetId,
         knowledge_point_id: scope.knowledgePointId,
+        knowledge_point_ids: scope.knowledgePointIds ?? [],
         question: scope.question
       })
     }),

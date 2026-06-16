@@ -33,6 +33,7 @@ from app.repositories.knowledge_graph_repository import KnowledgePointCreateData
 from app.repositories.knowledge_graph_repository import KnowledgeGraphRepository
 from app.schemas.knowledge_graph import KnowledgeGraphGenerateRequest, KnowledgePointNode
 from app.services.knowledge_graph_service import (
+    _append_existing_points_for_material_links,
     _enrich_material_evidence,
     _normalize_graph_points,
     _validate_graph_merges,
@@ -68,6 +69,58 @@ def test_mock_generate_knowledge_graph_returns_weighted_points(monkeypatch):
     assert result["merges"] == []
 
 
+def test_incremental_real_graph_generation_extracts_candidates_before_alignment(monkeypatch):
+    monkeypatch.setattr(ai_service.settings, "ai_provider", "openai-compatible")
+    tasks: list[str] = []
+
+    def fake_chat_completion(**kwargs):
+        task = str(kwargs["task"])
+        tasks.append(task)
+        if task == "knowledge_graph_candidate_extraction":
+            return """
+            {"points":[{"name":"需求确认","description":"确认需求范围",
+            "importance_weight":0.8,"parent_name":null,"level":1,"sort_order":1,
+            "evidence":[{"material_id":2,"snippet":"需求确认需要明确范围","relevance_score":1.0}]}]}
+            """
+        return """
+        {"points":[{"name":"需求确认","existing_name":"需求分析","description":"确认需求范围",
+        "importance_weight":0.8,"parent_name":null,"level":1,"sort_order":1,
+        "evidence":[{"material_id":2,"snippet":"需求确认需要明确范围","relevance_score":1.0}]}],
+        "merges":[]}
+        """
+
+    monkeypatch.setattr(ai_service.llm_service, "chat_completion", fake_chat_completion)
+
+    result = ai_service.generate_knowledge_graph(
+        target_title="软件工程复习",
+        subject="软件工程",
+        materials=[
+            {
+                "material_id": 2,
+                "title": "new.txt",
+                "parsed_text": "需求确认需要明确范围。",
+            }
+        ],
+        existing_points=[
+            {
+                "name": "需求分析",
+                "description": "明确需求范围",
+                "importance_weight": 0.9,
+                "parent_name": None,
+                "level": 1,
+                "sort_order": 1,
+            }
+        ],
+        max_points=5,
+    )
+
+    assert tasks == [
+        "knowledge_graph_candidate_extraction",
+        "knowledge_graph_candidate_alignment",
+    ]
+    assert result["points"][0]["existing_name"] == "需求分析"
+
+
 def test_normalize_graph_merges_filters_invalid_items():
     merges = ai_service._normalize_graph_merges(
         [
@@ -83,9 +136,10 @@ def test_normalize_graph_merges_filters_invalid_items():
 
 
 def test_knowledge_graph_generate_request_limits_point_count():
-    payload = KnowledgeGraphGenerateRequest(target_id=1, max_points=3)
+    payload = KnowledgeGraphGenerateRequest(target_id=1, material_id=2, max_points=3)
 
     assert payload.target_id == 1
+    assert payload.material_id == 2
     assert payload.force_regenerate is False
     assert payload.max_points == 3
 
@@ -119,6 +173,54 @@ def test_enrich_material_evidence_links_new_point_to_existing_materials():
         int(item["material_id"]) for item in enriched[0].evidence
     }
     assert evidence_material_ids == {1, 2}
+
+
+def test_append_existing_points_for_material_links_adds_keyword_matched_old_point():
+    points = [
+        KnowledgePointCreateData(
+            name="软件设计",
+            description="模块划分和接口设计",
+            importance_weight=0.8,
+            parent_name=None,
+            level=1,
+            sort_order=1,
+            evidence=[],
+        )
+    ]
+    existing_points = [
+        SimpleNamespace(
+            id=1,
+            name="需求分析",
+            description="明确系统边界和验收标准",
+            importance_weight=0.9,
+            parent_id=None,
+            level=1,
+            sort_order=1,
+        ),
+        SimpleNamespace(
+            id=2,
+            name="软件设计",
+            description="模块划分和接口设计",
+            importance_weight=0.8,
+            parent_id=None,
+            level=1,
+            sort_order=2,
+        ),
+    ]
+    material = SimpleNamespace(
+        id=7,
+        parsed_text="新资料补充说明：需求分析用于明确系统边界，并形成验收标准。",
+    )
+
+    enriched = _append_existing_points_for_material_links(
+        points,
+        existing_points=existing_points,
+        material=material,
+    )
+
+    appended = {point.name: point for point in enriched}
+    assert set(appended) == {"软件设计", "需求分析"}
+    assert appended["需求分析"].evidence[0]["material_id"] == 7
 
 
 def test_normalize_graph_points_allows_parent_from_existing_graph():

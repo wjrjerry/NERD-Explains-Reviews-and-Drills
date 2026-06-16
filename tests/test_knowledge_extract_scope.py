@@ -1,8 +1,5 @@
 """Tests for unified knowledge extraction request/response schemas."""
 
-import pytest
-from pydantic import ValidationError
-
 from app.schemas.knowledge import KnowledgeExtractRequest, KnowledgeExtractResponse
 from app.services import ai_service
 
@@ -21,9 +18,11 @@ def test_knowledge_extract_request_accepts_target_scope():
     assert payload.force_regenerate is True
 
 
-def test_knowledge_extract_request_rejects_ambiguous_scope():
-    with pytest.raises(ValidationError):
-        KnowledgeExtractRequest(material_id=1, target_id=2)
+def test_knowledge_extract_request_accepts_target_material_incremental_scope():
+    payload = KnowledgeExtractRequest(material_id=1, target_id=2)
+
+    assert payload.material_id == 1
+    assert payload.target_id == 2
 
 
 def test_knowledge_extract_response_allows_target_graph_field():

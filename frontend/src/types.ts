@@ -3,6 +3,8 @@ export type TargetType = "course" | "exam";
 export type MaterialType = "pdf" | "txt" | "image";
 export type ParseStatus = "uploaded" | "parsing" | "parsed" | "failed";
 export type ParseTaskStatus = "pending" | "running" | "succeeded" | "failed";
+export type KnowledgeJobStatus = "pending" | "running" | "succeeded" | "failed";
+export type KnowledgeJobType = "material_extract" | "target_extract" | "graph_refresh" | "target_refresh_pipeline";
 export type QuestionType = "single_choice" | "multiple_choice" | "true_false" | "subjective";
 export type Difficulty = "easy" | "medium" | "hard";
 export type MasteryStatus = "unmastered" | "reviewing" | "mastered";
@@ -96,6 +98,20 @@ export interface KnowledgeGraph {
   target_id: number;
   nodes: KnowledgeGraphNode[];
   generated_at: string | null;
+}
+
+export interface KnowledgeJob {
+  id: number;
+  job_type: KnowledgeJobType;
+  status: KnowledgeJobStatus;
+  target_id: number | null;
+  material_id: number | null;
+  force_regenerate: boolean;
+  max_points: number;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 export interface MaterialSection {

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-do-not-use-in-production")
+os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +37,7 @@ async def test_engine(tmp_path_factory) -> AsyncGenerator:
     import app.models.parse_task
     import app.models.admin_log
     import app.models.knowledge
+    import app.models.knowledge_job
     import app.models.question
     import app.models.test_record
     import app.models.wrong_question

@@ -104,6 +104,26 @@ def _build_references_from_materials(materials: list[Material], question: str) -
     return references
 
 
+def _requested_knowledge_point_ids(payload: QaAskRequest) -> list[int]:
+    ids: list[int] = []
+    if payload.knowledge_point_id is not None:
+        ids.append(payload.knowledge_point_id)
+    ids.extend(payload.knowledge_point_ids or [])
+
+    unique_ids: list[int] = []
+    seen: set[int] = set()
+    for point_id in ids:
+        try:
+            normalized = int(point_id)
+        except (TypeError, ValueError):
+            continue
+        if normalized <= 0 or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_ids.append(normalized)
+    return unique_ids
+
+
 async def _resolve_qa_scope(
     db: AsyncSession,
     payload: QaAskRequest,
@@ -126,16 +146,18 @@ async def _resolve_qa_scope(
         raise ValueError("课程/考试目标不存在")
 
     points: list[KnowledgePoint] = []
-    has_explicit_point = payload.knowledge_point_id is not None
-    if payload.knowledge_point_id is not None:
-        point = await KnowledgeGraphRepository.get_point_by_id(
-            db,
-            user_id=user_id,
-            point_id=payload.knowledge_point_id,
-        )
-        if point is None or point.target_id != payload.target_id:
-            raise ValueError("知识点不存在或不属于当前目标")
-        points = [point]
+    requested_point_ids = _requested_knowledge_point_ids(payload)
+    has_explicit_point = bool(requested_point_ids)
+    if requested_point_ids:
+        for point_id in requested_point_ids:
+            point = await KnowledgeGraphRepository.get_point_by_id(
+                db,
+                user_id=user_id,
+                point_id=point_id,
+            )
+            if point is None or point.target_id != payload.target_id:
+                raise ValueError("知识点不存在或不属于当前目标")
+            points.append(point)
     else:
         points = await KnowledgeGraphRepository.list_points_by_target(
             db,
@@ -156,18 +178,26 @@ async def _resolve_qa_scope(
         return material.id, payload.target_id, material.parsed_text, [], points
 
     if has_explicit_point and points:
-        evidence_rows = await KnowledgeGraphRepository.list_material_evidence_for_point(
-            db,
-            point_id=points[0].id,
-        )
-        material_ids = [material.id for _, material in evidence_rows]
-        materials = [material for _, material in evidence_rows]
+        evidence_rows = []
+        for point in points:
+            evidence_rows.extend(
+                await KnowledgeGraphRepository.list_material_evidence_for_point(
+                    db,
+                    point_id=point.id,
+                )
+            )
+        material_by_id: dict[int, Material] = {}
+        for _link, material in evidence_rows:
+            material_by_id.setdefault(material.id, material)
+        material_ids = list(material_by_id)
+        materials = list(material_by_id.values())
         if not materials:
             materials = await MaterialRepository.list_parsed_by_target(
                 db,
                 user_id=user_id,
                 target_id=payload.target_id,
             )
+            material_ids = [material.id for material in materials]
         references = [
             QaReference(
                 material_id=material.id,
@@ -234,7 +264,7 @@ async def ask_question(
             target_id=target_id,
             material_id=material_id,
         )
-    if target_id is not None and payload.knowledge_point_id is None and points:
+    if target_id is not None and not _requested_knowledge_point_ids(payload) and points:
         candidate_points = [
             {
                 "id": point.id,

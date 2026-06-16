@@ -116,8 +116,41 @@ async def extract_target_knowledge(
     current_user: User,
     target_id: int,
     force_regenerate: bool,
+    material_id: int | None = None,
 ) -> KnowledgeExtractResponse:
-    """Generate/save target-level extraction and refresh target knowledge graph."""
+    """Generate/save target-level extraction and refresh target knowledge graph.
+
+    This synchronous path is kept for compatibility. New upload and frontend
+    refresh flows use knowledge jobs so graph refreshes do not block requests.
+    """
+    response = await extract_target_summary(
+        db,
+        current_user=current_user,
+        target_id=target_id,
+        force_regenerate=force_regenerate,
+    )
+    graph = await KnowledgeGraphService.generate(
+        db,
+        current_user=current_user,
+        payload=KnowledgeGraphGenerateRequest(
+            target_id=target_id,
+            material_id=material_id,
+            force_regenerate=True,
+            max_points=30 if material_id is not None else 12,
+        ),
+    )
+    response.knowledge_graph = graph
+    return response
+
+
+async def extract_target_summary(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    target_id: int,
+    force_regenerate: bool,
+) -> KnowledgeExtractResponse:
+    """Generate/save target-level readable extraction without refreshing graph."""
     target = await StudyTargetRepository.get_by_id(
         db,
         target_id=target_id,
@@ -134,12 +167,7 @@ async def extract_target_knowledge(
             target_id=target_id,
         )
         if existing is not None:
-            graph = await KnowledgeGraphService.get_graph(
-                db,
-                current_user=current_user,
-                target_id=target_id,
-            )
-            return _to_response(existing, knowledge_graph=graph)
+            return _to_response(existing)
 
     materials = await MaterialRepository.list_parsed_by_target(
         db,
@@ -181,15 +209,7 @@ async def extract_target_knowledge(
         key_points=_normalize_string_list(generated["key_points"]),
         exam_points=_normalize_string_list(generated["exam_points"]),
     )
-    graph = await KnowledgeGraphService.generate(
-        db,
-        current_user=current_user,
-        payload=KnowledgeGraphGenerateRequest(
-            target_id=target_id,
-            force_regenerate=True,
-        ),
-    )
-    return _to_response(row, knowledge_graph=graph)
+    return _to_response(row)
 
 
 async def extract_knowledge(
@@ -199,7 +219,7 @@ async def extract_knowledge(
     current_user: User,
 ) -> KnowledgeExtractResponse:
     """Run material-level or target-level extraction from one public endpoint."""
-    if payload.material_id is not None:
+    if payload.material_id is not None and payload.target_id is None:
         material = await MaterialRepository.get_by_id(
             db,
             material_id=payload.material_id,
@@ -221,6 +241,7 @@ async def extract_knowledge(
         current_user=current_user,
         target_id=payload.target_id,
         force_regenerate=payload.force_regenerate,
+        material_id=payload.material_id,
     )
 
 
@@ -285,26 +306,17 @@ async def run_after_material_parsed(
     current_user: User,
     material: Material,
 ) -> None:
-    """Automatic pipeline after one material is parsed successfully.
-
-    First version runs synchronously inside the parse request so it needs no
-    extra infrastructure. Later it can be moved to a background queue without
-    changing the orchestration boundary.
-    """
+    """Queue automatic knowledge jobs after one material is parsed successfully."""
     if material.parse_status != MaterialParseStatus.parsed or not material.parsed_text:
         return
 
     try:
-        await extract_material_knowledge(
+        from app.services.knowledge_job_service import KnowledgeJobService
+
+        await KnowledgeJobService.enqueue_after_material_parsed(
             db,
             current_user=current_user,
-            material=material,
-        )
-        await extract_target_knowledge(
-            db,
-            current_user=current_user,
-            target_id=material.target_id,
-            force_regenerate=True,
+            material_id=material.id,
         )
     except Exception:
         await db.rollback()

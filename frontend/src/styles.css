@@ -762,6 +762,30 @@ p {
   color: #936200;
 }
 
+.inline-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: #0757a6;
+  font-size: 13px;
+  font-weight: 800;
+  background: rgba(0, 122, 255, 0.10);
+}
+
+.spin-icon {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .flow-status {
   display: inline-flex;
   align-items: center;
