@@ -23,6 +23,29 @@ services:
       redis:
         condition: service_healthy
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-study-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: docker
+      DEBUG: "true"
+      DATABASE_URL: postgresql+asyncpg://ai_study:ai_study_pwd@postgres:5432/ai_study_db
+      REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /app/uploads
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "-Q", "parse,ai_material,ai_target", "--loglevel=info", "--concurrency=2"]
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   postgres:
     image: postgres:16
     container_name: ai-study-postgres

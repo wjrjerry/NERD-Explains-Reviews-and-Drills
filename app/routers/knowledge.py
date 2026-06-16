@@ -56,9 +56,6 @@ async def extract_knowledge(
     - material_id: extract a summary for one parsed material.
     - target_id: extract an aggregated target summary and refresh the graph.
     """
-    if payload_data.get("material_id") is not None and payload_data.get("target_id") is not None:
-        payload_data = {**payload_data, "target_id": None}
-
     try:
         payload = KnowledgeExtractRequest.model_validate(payload_data)
     except ValidationError as exc:

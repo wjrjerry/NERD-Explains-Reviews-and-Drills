@@ -425,6 +425,7 @@ def _generate_knowledge_with_real_ai(
         task="knowledge_extraction",
         timeout_seconds=max(settings.ai_timeout_seconds, 60),
         max_tokens=1600,
+        response_format_json=True,
     )
     return _normalize_knowledge_response(_extract_json_object(content))
 
@@ -540,7 +541,7 @@ def _extract_json_array(text: str) -> list[object]:
         cleaned = fenced.group(1).strip()
 
     try:
-        data = json.loads(cleaned)
+        data = _loads_llm_json(cleaned)
     except json.JSONDecodeError:
         start = cleaned.find("[")
         end = cleaned.rfind("]")
@@ -548,7 +549,7 @@ def _extract_json_array(text: str) -> list[object]:
             raise llm_service.LlmServiceError(
                 "LLM question generation did not return a JSON array."
             )
-        data = json.loads(cleaned[start : end + 1])
+        data = _loads_llm_json(cleaned[start : end + 1])
 
     if not isinstance(data, list):
         raise llm_service.LlmServiceError(
@@ -565,7 +566,7 @@ def _extract_json_object(text: str) -> dict[str, object]:
         cleaned = fenced.group(1).strip()
 
     try:
-        data = json.loads(cleaned)
+        data = _loads_llm_json(cleaned)
     except json.JSONDecodeError:
         start = cleaned.find("{")
         end = cleaned.rfind("}")
@@ -573,13 +574,68 @@ def _extract_json_object(text: str) -> dict[str, object]:
             raise llm_service.LlmServiceError(
                 "LLM scoring did not return a JSON object."
             )
-        data = json.loads(cleaned[start : end + 1])
+        data = _loads_llm_json(cleaned[start : end + 1])
 
     if not isinstance(data, dict):
         raise llm_service.LlmServiceError(
             "LLM scoring response must be a JSON object."
         )
     return data
+
+
+def _loads_llm_json(text: str) -> object:
+    """Load JSON with small repairs for common model formatting slips."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as original_exc:
+        repaired = _repair_llm_json(text)
+        if repaired == text:
+            raise original_exc
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError as repaired_exc:
+            raise repaired_exc from original_exc
+
+
+_JSON_OBJECT_KEYS = (
+    "points",
+    "merges",
+    "name",
+    "existing_name",
+    "description",
+    "importance_weight",
+    "parent_name",
+    "level",
+    "sort_order",
+    "evidence",
+    "material_id",
+    "snippet",
+    "relevance_score",
+    "summary",
+    "outline",
+    "keywords",
+    "key_points",
+    "exam_points",
+    "questions",
+    "answer",
+    "analysis",
+    "options",
+    "correct_answer",
+)
+
+
+def _repair_llm_json(text: str) -> str:
+    """Repair conservative JSON issues that LLMs commonly emit."""
+    repaired = text.strip().lstrip("\ufeff")
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    repaired = re.sub(r"}\s*(?={)", "},", repaired)
+    repaired = re.sub(r"]\s*(?={)", "],", repaired)
+    repaired = re.sub(
+        r'(?<=[}\]"\d])\s*\n\s*(?="(?:' + "|".join(_JSON_OBJECT_KEYS) + r')"\s*:)',
+        ",\n",
+        repaired,
+    )
+    return repaired
 
 
 def _normalize_string_list(value: object) -> list[str]:
@@ -1292,6 +1348,7 @@ def score_subjective_answer(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         task="subjective_scoring",
+        response_format_json=True,
     )
     data = _extract_json_object(content)
     try:
@@ -1396,6 +1453,14 @@ def generate_knowledge_graph(
 ) -> dict[str, list[dict[str, object]]]:
     """Generate or update a target-level graph from parsed materials."""
     if settings.ai_provider != "mock":
+        if len(materials) == 1 and existing_points:
+            return _generate_incremental_knowledge_graph_with_real_ai(
+                target_title=target_title,
+                subject=subject,
+                material=materials[0],
+                existing_points=existing_points,
+                max_points=max_points,
+            )
         return _generate_knowledge_graph_with_real_ai(
             target_title=target_title,
             subject=subject,
@@ -1413,9 +1478,12 @@ def generate_knowledge_graph(
         if str(point.get("name", "")).strip()
     ]
     extracted_keywords = _extract_mock_keywords(joined_text)
-    keywords = extracted_keywords + [
-        name for name in existing_names if name not in extracted_keywords
-    ]
+    if len(materials) == 1 and existing_names:
+        keywords = extracted_keywords
+    else:
+        keywords = extracted_keywords + [
+            name for name in existing_names if name not in extracted_keywords
+        ]
     keywords = keywords[:max_points]
     if not keywords:
         keywords = [target_title or subject or "复习重点"]
@@ -1468,6 +1536,93 @@ def generate_knowledge_graph(
     return {"points": points, "merges": []}
 
 
+def _generate_incremental_knowledge_graph_with_real_ai(
+    *,
+    target_title: str,
+    subject: str | None,
+    material: dict[str, object],
+    existing_points: list[dict[str, object]],
+    max_points: int,
+) -> dict[str, list[dict[str, object]]]:
+    """Extract current-material candidates first, then align them to the graph."""
+    material_block = {
+        "material_id": material.get("material_id"),
+        "title": material.get("title"),
+        "parsed_text": _normalize_text(str(material.get("parsed_text", "")))[:4500],
+    }
+    candidate_system_prompt = (
+        "你是一个资料知识点抽取助手。请只根据当前资料抽取知识点，"
+        "不要参考已有图谱，也不要为了合并而省略当前资料中的概念。"
+        "必须返回严格 JSON 对象，不要返回 Markdown、解释文字或代码块。"
+    )
+    candidate_user_prompt = (
+        "学习目标：\n"
+        f"- 标题：{target_title}\n"
+        f"- 科目：{subject or '未提供'}\n\n"
+        "当前资料 JSON：\n"
+        f"{json.dumps(material_block, ensure_ascii=False)}\n\n"
+        "请先完整抽取当前资料自己的候选知识点，最多 "
+        f"{max_points} 个。返回 JSON 对象，字段为 points。"
+        "points 是数组，每个元素包含 name, description, importance_weight, "
+        "parent_name, level, sort_order, evidence。"
+        "evidence 必须引用当前资料 material_id，snippet 必须来自当前资料内容。"
+    )
+    candidate_content = llm_service.chat_completion(
+        system_prompt=candidate_system_prompt,
+        user_prompt=candidate_user_prompt,
+        task="knowledge_graph_candidate_extraction",
+        timeout_seconds=max(settings.ai_timeout_seconds, 60),
+        max_tokens=1800,
+        response_format_json=True,
+    )
+    candidate_data = _extract_json_object(candidate_content)
+    raw_candidates = candidate_data.get("points")
+    if not isinstance(raw_candidates, list) or not raw_candidates:
+        raise llm_service.LlmServiceError("LLM candidate graph points must be a non-empty list.")
+    candidates = [
+        _normalize_graph_item(item, index=index)
+        for index, item in enumerate(raw_candidates[:max_points])
+    ]
+
+    align_system_prompt = (
+        "你是一个知识图谱对齐助手。请把当前资料候选知识点与已有图谱对齐，"
+        "保留候选知识点覆盖度，同时避免重复节点。必须返回严格 JSON 对象。"
+    )
+    align_user_prompt = (
+        "已有知识图谱 JSON：\n"
+        f"{json.dumps(existing_points, ensure_ascii=False)}\n\n"
+        "当前资料候选知识点 JSON：\n"
+        f"{json.dumps(candidates, ensure_ascii=False)}\n\n"
+        "请逐一处理候选知识点："
+        "若候选点与已有知识点语义相同，返回该候选点时填写 existing_name 为已有图谱原始 name；"
+        "若候选点是新概念，existing_name 为 null 并保留为新增点；"
+        "若候选点只是已有知识点的新命名，可在 merges 中声明 from_name 到 to_name。"
+        "不得因为候选点可归入某个大类就丢弃它；只有语义相同才合并。"
+        "返回 JSON 对象，字段为 points 和 merges。points 最多 "
+        f"{max_points} 个，元素字段与候选点一致，并保留当前资料 evidence。"
+    )
+    align_content = llm_service.chat_completion(
+        system_prompt=align_system_prompt,
+        user_prompt=align_user_prompt,
+        task="knowledge_graph_candidate_alignment",
+        timeout_seconds=max(settings.ai_timeout_seconds, 60),
+        max_tokens=2200,
+        response_format_json=True,
+    )
+    align_data = _extract_json_object(align_content)
+    raw_points = align_data.get("points")
+    if not isinstance(raw_points, list) or not raw_points:
+        raise llm_service.LlmServiceError("LLM aligned graph points must be a non-empty list.")
+
+    return {
+        "points": [
+            _normalize_graph_item(item, index=index)
+            for index, item in enumerate(raw_points[:max_points])
+        ],
+        "merges": _normalize_graph_merges(align_data.get("merges", [])),
+    }
+
+
 def _generate_knowledge_graph_with_real_ai(
     *,
     target_title: str,
@@ -1486,6 +1641,7 @@ def _generate_knowledge_graph_with_real_ai(
                 "parsed_text": _normalize_text(str(material.get("parsed_text", "")))[:2500],
             }
         )
+    is_incremental_material = len(material_blocks) == 1 and bool(existing_points)
 
     system_prompt = (
         "你是一个备考知识图谱维护助手。请根据已有图谱和多份课程资料，更新目标级知识点。"
@@ -1499,9 +1655,17 @@ def _generate_knowledge_graph_with_real_ai(
         f"{json.dumps(existing_points, ensure_ascii=False)}\n\n"
         "资料列表 JSON：\n"
         f"{json.dumps(material_blocks, ensure_ascii=False)}\n\n"
+        f"刷新模式：{'单资料增量刷新' if is_incremental_material else '目标级资料刷新'}。\n"
         "请在已有知识图谱基础上更新，而不是从零重建。"
         "已有知识点仍然成立时必须复用其原 name，不要仅因措辞不同创建重复节点；"
-        "可以根据新资料补充新知识点、更新描述、重要度、层级和资料证据。"
+        + (
+            "本轮资料列表只包含当前新/当前资料。请重点判断已有知识点是否被这份资料覆盖："
+            "凡是与当前资料实际相关的已有知识点，都应作为 points 返回，并在 evidence 中加入当前资料的 snippet；"
+            "只有当前资料确实引入已有图谱没有覆盖的新概念时，才新增知识点。"
+            if is_incremental_material
+            else ""
+        )
+        + "可以根据新资料补充新知识点、更新描述、重要度、层级和资料证据。"
         "请优先返回新资料引入的新知识点，以及资料证据或属性需要更新的已有知识点，"
         "不需要机械重复所有没有变化的旧知识点。"
         "如果返回项对应已有知识点，必须增加 existing_name 字段并填写已有图谱中的原始 name；"
@@ -1533,6 +1697,7 @@ def _generate_knowledge_graph_with_real_ai(
         task="knowledge_graph_generation",
         timeout_seconds=max(settings.ai_timeout_seconds, 60),
         max_tokens=2200,
+        response_format_json=True,
     )
     data = _extract_json_object(content)
     raw_points = data.get("points")
@@ -1593,6 +1758,7 @@ def generate_review_plan(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         task="review_plan_generation",
+        response_format_json=True,
     )
     data = _extract_json_object(content)
     tasks = data.get("tasks")

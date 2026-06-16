@@ -1,6 +1,6 @@
 from mimetypes import guess_type
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from app.schemas.response import ApiResponse, PageResult
 from app.services.material_service import MaterialService
 from app.services.material_structure_service import MaterialStructureService
 from app.services.parser_service import ParserService
+from app.services.task_queue_service import TaskQueueService
 from app.utils.responses import fail, page_result, success
 
 router = APIRouter(prefix="/materials", tags=["materials"])
@@ -32,7 +33,6 @@ router = APIRouter(prefix="/materials", tags=["materials"])
 
 @router.post("", response_model=ApiResponse[MaterialDetailResponse])
 async def upload_material(
-    background_tasks: BackgroundTasks,
     target_id: int = Form(..., description="所属课程/考试目标 ID"),
     auto_parse: bool = Form(default=True, description="上传成功后是否自动解析"),
     file: UploadFile = File(..., description="上传资料文件"),
@@ -53,7 +53,7 @@ async def upload_material(
         )
         if auto_parse:
             material, task = await ParserService.enqueue_material_parse(db, material=material)
-            background_tasks.add_task(ParserService.parse_material_by_task_id, task.id)
+            TaskQueueService.enqueue_parse_task(task.id)
     except ValueError as exc:
         return fail(code=40003, message=str(exc))
 
@@ -349,7 +349,6 @@ async def get_material_structured(
 
 @router.post("/{material_id}/parse", response_model=ApiResponse[MaterialDetailResponse])
 async def parse_material(
-    background_tasks: BackgroundTasks,
     material_id: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -366,7 +365,7 @@ async def parse_material(
             material_id=material_id,
         )
         material, task = await ParserService.enqueue_material_parse(db, material=material)
-        background_tasks.add_task(ParserService.parse_material_by_task_id, task.id)
+        TaskQueueService.enqueue_parse_task(task.id)
     except ValueError as exc:
         return fail(code=40402, message=str(exc))
 

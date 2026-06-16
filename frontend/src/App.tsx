@@ -37,6 +37,7 @@ import type {
   Difficulty,
   HealthStatus,
   KnowledgeGraph,
+  KnowledgeJob,
   KnowledgeMasteryStatus,
   KnowledgePointMaterialItem,
   KnowledgePointReference,
@@ -127,6 +128,12 @@ const parseStatusText: Record<Material["parse_status"], string> = {
 
 const parsePollMaxAttempts = 30;
 const parsePollIntervalMs = 2500;
+const knowledgeJobPollMaxAttempts = 45;
+const knowledgeJobPollIntervalMs = 2000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function getParseActionText(status: Material["parse_status"]) {
   if (status === "parsing") return "解析中";
@@ -169,6 +176,7 @@ function App() {
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
   const [targetKnowledge, setTargetKnowledge] = useState<KnowledgeResult | null>(null);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [activeKnowledgeJob, setActiveKnowledgeJob] = useState<KnowledgeJob | null>(null);
   const [graphMaterialKnowledgeLoading, setGraphMaterialKnowledgeLoading] = useState(false);
   const [graphMaterialKnowledgeError, setGraphMaterialKnowledgeError] = useState<string | null>(null);
   const [structured, setStructured] = useState<MaterialStructured | null>(null);
@@ -538,7 +546,7 @@ function App() {
 
     const [graphData, extractionData] = await Promise.all([
       api.getKnowledgeGraph(material.target_id).catch(() => null),
-      api.extractKnowledge({ target_id: material.target_id, force_regenerate: false }).catch(() => null)
+      api.getLatestKnowledge({ targetId: material.target_id }).catch(() => null)
     ]);
 
     if (selectedTargetId === material.target_id || selectedMaterialId === material.id) {
@@ -552,6 +560,72 @@ function App() {
       if (refreshedMaterialExtraction) {
         setKnowledge(refreshedMaterialExtraction);
       }
+    }
+
+    let job = await api
+      .getLatestKnowledgeJob({
+        targetId: material.target_id,
+        materialId: material.id,
+        jobType: "target_refresh_pipeline"
+      })
+      .catch(() => null);
+    if (!job) {
+      job = await api
+        .getLatestKnowledgeJob({
+          targetId: material.target_id,
+          jobType: "target_refresh_pipeline"
+        })
+        .catch(() => null);
+    }
+    if (job && (job.status === "pending" || job.status === "running")) {
+      void waitForKnowledgeJob(job, {
+        targetId: material.target_id,
+        materialId: material.id,
+        successMessage: "知识提炼和图谱刷新已完成。"
+      });
+    }
+  }
+
+  async function refreshKnowledgeViews(targetId: number, materialId?: number | null) {
+    const [graphData, targetExtraction, materialExtraction] = await Promise.all([
+      api.getKnowledgeGraph(targetId).catch(() => null),
+      api.getLatestKnowledge({ targetId }).catch(() => null),
+      materialId ? api.getLatestKnowledge({ materialId }).catch(() => null) : Promise.resolve(null)
+    ]);
+    setKnowledgeGraph(targetExtraction?.knowledge_graph ?? graphData);
+    if (targetExtraction) {
+      setTargetKnowledge(targetExtraction);
+    }
+    if (materialExtraction) {
+      setKnowledge(materialExtraction);
+    }
+  }
+
+  async function waitForKnowledgeJob(
+    initialJob: KnowledgeJob,
+    options: { targetId: number; materialId?: number | null; successMessage?: string }
+  ) {
+    setActiveKnowledgeJob(initialJob);
+    setKnowledgeRefreshing(true);
+    let currentJob = initialJob;
+    try {
+      for (let attempt = 0; attempt < knowledgeJobPollMaxAttempts; attempt += 1) {
+        currentJob = await api.getKnowledgeJob(initialJob.id);
+        setActiveKnowledgeJob(currentJob);
+        if (currentJob.status === "succeeded") {
+          await refreshKnowledgeViews(options.targetId, options.materialId);
+          setNotice({ tone: "success", text: options.successMessage ?? "知识任务已完成，图谱已刷新。" });
+          return currentJob;
+        }
+        if (currentJob.status === "failed") {
+          throw new Error(currentJob.error_message ?? "知识任务执行失败");
+        }
+        await sleep(knowledgeJobPollIntervalMs);
+      }
+      setNotice({ tone: "warning", text: "知识任务仍在后台执行，可稍后刷新查看结果。" });
+      return currentJob;
+    } finally {
+      setKnowledgeRefreshing(false);
     }
   }
 
@@ -579,8 +653,8 @@ function App() {
         setNotice({
           tone: data.material.parse_warning ? "warning" : "success",
           text: data.material.parse_warning
-            ? "资料解析完成，但解析质量可能影响 AI 回答和出题。"
-            : "资料解析完成，结构化内容和知识图谱已刷新。"
+            ? "资料解析完成，已提交知识刷新任务；解析质量可能影响 AI 回答和出题。"
+            : "资料解析完成，已提交知识提炼和图谱刷新任务。"
         });
       } else if (data.material.parse_status === "failed") {
         parsePollAttemptsRef.current.delete(materialId);
@@ -750,8 +824,8 @@ function App() {
         setNotice({
           tone: data.material.parse_warning ? "warning" : "success",
           text: data.material.parse_warning
-            ? "资料解析完成，但解析质量可能影响 AI 回答和出题。"
-            : "资料解析完成，结构化内容和知识图谱已刷新。"
+            ? "资料解析完成，已提交知识刷新任务；解析质量可能影响 AI 回答和出题。"
+            : "资料解析完成，已提交知识提炼和图谱刷新任务。"
         });
       } else if (data.material.parse_status === "failed") {
         setNotice({ tone: "danger", text: data.material.parse_error ?? "资料解析失败。" });
@@ -780,17 +854,25 @@ function App() {
     }
 
     setKnowledgeRefreshing(true);
-    setNotice({ tone: "info", text: "正在更新资料知识提炼和目标图谱..." });
+    setNotice({ tone: "info", text: "已提交资料知识提炼和图谱刷新任务..." });
     try {
-      const materialData = await api.extractKnowledge({ materialId: selectedMaterial.id });
-      const targetData = await api.extractKnowledge({ targetId: selectedMaterial.target_id, forceRegenerate: true });
-      setKnowledge(materialData);
-      setTargetKnowledge(targetData);
-      setKnowledgeGraph(
-        targetData.knowledge_graph ??
-          (await api.getKnowledgeGraph(selectedMaterial.target_id).catch(() => null))
+      const materialJob = await api.createMaterialExtractJob(selectedMaterial.id);
+      await waitForKnowledgeJob(materialJob, {
+        targetId: selectedMaterial.target_id,
+        materialId: selectedMaterial.id,
+        successMessage: "资料级知识提炼已完成。"
+      });
+      const graphJob = await api.createGraphRefreshJob(
+        selectedMaterial.target_id,
+        selectedMaterial.id,
+        true,
+        30
       );
-      setNotice({ tone: "success", text: "知识提炼和图谱已更新。" });
+      await waitForKnowledgeJob(graphJob, {
+        targetId: selectedMaterial.target_id,
+        materialId: selectedMaterial.id,
+        successMessage: "资料知识提炼和图谱增量刷新已完成。"
+      });
     } catch (error) {
       setNotice({ tone: "danger", text: `知识提炼失败：${readMessage(error)}` });
     } finally {
@@ -935,16 +1017,24 @@ function App() {
     }
 
     setKnowledgeRefreshing(true);
-    setNotice({ tone: "info", text: "正在重新提炼目标并刷新知识图谱..." });
+    setNotice({ tone: "info", text: "已提交知识图谱刷新任务..." });
     try {
-      const extractionData = await api.extractKnowledge({ targetId: selectedTargetId, forceRegenerate: true });
-      setTargetKnowledge(extractionData);
-      setKnowledgeGraph(
-        extractionData.knowledge_graph ??
-          (await api.getKnowledgeGraph(selectedTargetId).catch(() => null))
+      const focusMaterialId =
+        selectedMaterial?.target_id === selectedTargetId && selectedMaterial.parse_status === "parsed"
+          ? selectedMaterial.id
+          : undefined;
+      const graphJob = await api.createGraphRefreshJob(
+        selectedTargetId,
+        focusMaterialId,
+        true,
+        focusMaterialId ? 30 : 12
       );
+      await waitForKnowledgeJob(graphJob, {
+        targetId: selectedTargetId,
+        materialId: focusMaterialId,
+        successMessage: focusMaterialId ? "知识图谱已增量刷新。" : "知识图谱已全量刷新。"
+      });
       setView("graph");
-      setNotice({ tone: "success", text: "目标级知识提炼和知识图谱已刷新。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `知识图谱生成失败：${readMessage(error)}` });
     } finally {
@@ -1214,6 +1304,7 @@ function App() {
             materialKnowledgeLoading={graphMaterialKnowledgeLoading}
             materialKnowledgeError={graphMaterialKnowledgeError}
             knowledgeRefreshing={knowledgeRefreshing}
+            activeKnowledgeJob={activeKnowledgeJob}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
             onGenerate={handleGenerateKnowledgeGraph}
@@ -1780,7 +1871,7 @@ function TargetsPage({
           <option value="exam">exam</option>
           <option value="course">course</option>
         </select>
-        <input name="exam_date" placeholder="考试日期，如 2026年06月16日" />
+        <input name="exam_date" type="date" />
         <textarea name="review_goal" placeholder="复习目标" required />
         <textarea name="description" placeholder="补充说明（可选）" />
         <button className="primary-button" type="submit"><Plus size={16} />创建目标</button>
@@ -2238,6 +2329,7 @@ function KnowledgeGraphPage({
   materialKnowledgeLoading,
   materialKnowledgeError,
   knowledgeRefreshing,
+  activeKnowledgeJob,
   onSelectTarget,
   onSelectMaterial,
   onGenerate,
@@ -2258,6 +2350,7 @@ function KnowledgeGraphPage({
   materialKnowledgeLoading: boolean;
   materialKnowledgeError: string | null;
   knowledgeRefreshing: boolean;
+  activeKnowledgeJob: KnowledgeJob | null;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
   onGenerate: () => void;
@@ -2407,11 +2500,17 @@ function KnowledgeGraphPage({
         <div className="quick-actions">
           <button disabled={knowledgeRefreshing} onClick={onGenerate}>
             {knowledgeRefreshing ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
-            {knowledgeRefreshing ? "正在刷新" : "重新提炼并刷新图谱"}
+            {knowledgeRefreshing ? "任务执行中" : selectedMaterialId ? "增量刷新图谱" : "全量刷新图谱"}
           </button>
           <button disabled={!target} onClick={onExport}><Download size={16} />导出知识总结</button>
           <button disabled={!target} onClick={onExportAnki}><Download size={16} />导出 Anki CSV</button>
         </div>
+        {activeKnowledgeJob ? (
+          <p className={activeKnowledgeJob.status === "failed" ? "danger-text" : "muted-text"}>
+            知识任务：{activeKnowledgeJob.job_type} / {activeKnowledgeJob.status}
+            {activeKnowledgeJob.error_message ? ` - ${activeKnowledgeJob.error_message}` : ""}
+          </p>
+        ) : null}
         {selectedGraphMaterial ? (
           <p className="form-hint">
             当前按资料筛选：{selectedGraphMaterial.original_filename}。只显示该资料关联知识点及其上级节点。
@@ -3062,8 +3161,8 @@ function ReviewPlansPage({
         <select name="target_id" defaultValue={targets[0]?.id}>
           {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
         </select>
-        <input name="start_date" placeholder="开始日期，如 2026年06月16日" required />
-        <input name="end_date" placeholder="结束日期，如 2026年07月01日" required />
+        <input name="start_date" type="date" required />
+        <input name="end_date" type="date" required />
         <button className="primary-button" type="submit"><CalendarDays size={16} />生成计划</button>
       </form>
 

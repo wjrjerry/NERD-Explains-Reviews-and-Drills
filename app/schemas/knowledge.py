@@ -16,8 +16,9 @@ class KnowledgeExtractRequest(BaseModel):
     """Request body for starting knowledge extraction.
 
     material_id starts material-level extraction for one parsed material.
-    target_id starts target-level extraction for all parsed materials under one
-    study target and also refreshes the target-level knowledge graph.
+    target_id starts target-level extraction and refreshes the target graph.
+    material_id may accompany target_id to incrementally refresh the graph with
+    one parsed material.
     """
 
     material_id: int | None = Field(default=None, description="Parsed material ID.")
@@ -29,11 +30,9 @@ class KnowledgeExtractRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_scope(self) -> "KnowledgeExtractRequest":
-        """Require exactly one extraction scope."""
+        """Require a material or target scope."""
         if self.material_id is None and self.target_id is None:
             raise ValueError("material_id 或 target_id 至少需要提供一个")
-        if self.material_id is not None and self.target_id is not None:
-            raise ValueError("material_id 和 target_id 不能同时提供")
         return self
 
 

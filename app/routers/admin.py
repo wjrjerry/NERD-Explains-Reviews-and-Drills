@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +20,7 @@ from app.schemas.material import MaterialDetailResponse, MaterialResponse
 from app.schemas.parse_task import ParseTaskDetailResponse, ParseTaskResponse
 from app.schemas.response import ApiResponse, PageResult
 from app.schemas.user import UserResponse
-from app.services.parser_service import ParserService
+from app.services.task_queue_service import TaskQueueService
 from app.utils.responses import fail, page_result, success
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -190,7 +190,6 @@ async def list_failed_tasks(
 @router.post("/tasks/{task_id}/retry", response_model=ApiResponse[ParseTaskDetailResponse])
 async def retry_parse_task(
     task_id: int,
-    background_tasks: BackgroundTasks,
     admin_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -229,7 +228,7 @@ async def retry_parse_task(
         parsed_text=None,
         parse_error=None,
     )
-    background_tasks.add_task(ParserService.parse_material_by_task_id, task.id)
+    TaskQueueService.enqueue_parse_task(task.id)
 
     await AdminLogRepository.create(
         db,

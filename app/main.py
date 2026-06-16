@@ -11,6 +11,7 @@ from app.routers import (
     health,
     knowledge,
     knowledge_graphs,
+    knowledge_jobs,
     knowledge_points,
     materials,
     qa,
@@ -46,6 +47,7 @@ app.include_router(exports.router)
 app.include_router(admin.router)
 app.include_router(knowledge.router)
 app.include_router(knowledge_graphs.router)
+app.include_router(knowledge_jobs.router)
 app.include_router(knowledge_points.router)
 app.include_router(qa.router)
 app.include_router(questions.router)

@@ -732,7 +732,7 @@ class ParserService:
         """创建解析任务，并将资料置为 parsing。
 
         该方法只负责入队和状态初始化，不执行耗时解析。真正的解析由
-        parse_material_by_task_id() 在 BackgroundTasks 中完成。
+        parse_material_by_task_id() 在 Celery worker 中完成。
         """
         task = await ParseTaskRepository.create(
             db,
@@ -755,7 +755,7 @@ class ParserService:
     async def parse_material_by_task_id(task_id: int) -> None:
         """后台解析任务入口。
 
-        BackgroundTasks 在请求结束后运行，不能复用请求中的 AsyncSession。
+        Celery task 不能复用请求中的 AsyncSession。
         因此这里按 task_id 重新打开数据库会话、加载任务和资料，再执行解析。
         """
         async with db_session.AsyncSessionLocal() as db:

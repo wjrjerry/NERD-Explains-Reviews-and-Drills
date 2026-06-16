@@ -21,6 +21,7 @@ from app.models import test_record  # noqa: F401
 from app.models import wrong_question  # noqa: F401
 from app.models import review_plan  # noqa: F401
 from app.models import knowledge  # noqa: F401
+from app.models import knowledge_job  # noqa: F401
 from app.models import knowledge_point  # noqa: F401
 from app.models import ai_call_log  # noqa: F401
 
