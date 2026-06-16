@@ -15,7 +15,9 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://ai_study:ai_study_pwd@localhost:5432/ai_study_db",
 )
-TEST_MATERIAL_DIR = Path(os.getenv("TEST_MATERIAL_DIR", "/tmp/ai-study-test-materials"))
+TEST_MATERIAL_DIR = Path(
+    os.getenv("TEST_MATERIAL_DIR", str(Path("artifacts") / "ai-study-test-materials"))
+)
 TEST_MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
 (TEST_MATERIAL_DIR / "test.txt").write_text("x + 1 = 3\n\nx = ?\n", encoding="utf-8")
 
