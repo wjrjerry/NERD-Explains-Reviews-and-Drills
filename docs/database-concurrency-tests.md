@@ -17,23 +17,22 @@
 
 `tests/database_concurrency_performance_test_plan.md`
 
-## 安装依赖
-
-Windows PowerShell：
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install (Get-Content requirements.txt | Where-Object { $_ -notmatch '^uvloop==' })
-```
-
-说明：`uvloop` 不支持 Windows。Linux/macOS 可直接执行：
+<!-- ## 安装依赖
 
 ```bash
 python -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
-```
+``` -->
 
 ## 快速运行
+
+有后端环境可直接 docker compose 运行
+
+```bash
+docker compose exec api python -m pytest tests/test_db_concurrency_c18_c24.py -s
+```
+
+或者安装依赖运行
 
 Windows PowerShell：
 
@@ -53,7 +52,9 @@ Linux/macOS：
   tests/test_db_concurrency_c12_c14.py
 ```
 
-必须加 `-s`，否则 pytest 会捕获 stdout，看不到每个并发用例的统计信息。
+<!-- 必须加 `-s`，否则 pytest 会捕获 stdout，看不到每个并发用例的统计信息。 -->
+
+
 
 ## 输出格式
 
