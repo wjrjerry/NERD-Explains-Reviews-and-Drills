@@ -2168,39 +2168,49 @@ button.summary-chip:focus-visible {
   content: "";
   position: absolute;
   z-index: 0;
-  right: -140px;
-  top: 11%;
-  width: min(760px, 64vw);
-  height: min(520px, 58vh);
+  left: 50%;
+  top: 50%;
+  width: min(1180px, 86vw);
+  height: min(700px, 78vh);
   border: 1px solid rgba(35, 47, 72, 0.08);
-  border-radius: 42px;
+  border-radius: 56px;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.20)),
-    linear-gradient(135deg, rgba(0, 122, 255, 0.12), rgba(52, 199, 89, 0.10));
-  box-shadow: 0 36px 90px rgba(44, 57, 82, 0.12);
-  transform: rotate(-7deg);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.50), rgba(255, 255, 255, 0.16)),
+    linear-gradient(135deg, rgba(0, 122, 255, 0.08), rgba(52, 199, 89, 0.08));
+  box-shadow: 0 42px 110px rgba(44, 57, 82, 0.10);
+  transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
 .auth-background-panels {
   position: absolute;
-  inset: 0;
+  left: 50%;
+  top: 50%;
   z-index: 0;
+  display: grid;
+  width: min(500px, 34vw);
+  gap: 12px;
+  border: 1px solid rgba(35, 47, 72, 0.07);
+  border-radius: 34px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.34);
+  box-shadow: 0 28px 90px rgba(44, 57, 82, 0.08);
+  backdrop-filter: blur(12px);
+  opacity: 0.72;
+  transform: translate(12%, -50%);
   pointer-events: none;
 }
 
 .auth-bg-panel {
-  position: absolute;
   display: grid;
   gap: 10px;
-  width: 230px;
+  width: auto;
   border: 1px solid rgba(35, 47, 72, 0.08);
-  border-radius: 22px;
-  padding: 16px;
+  border-radius: 20px;
+  padding: 14px;
   color: #172033;
-  background: rgba(255, 255, 255, 0.54);
-  box-shadow: 0 24px 60px rgba(44, 57, 82, 0.10);
-  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.48);
+  box-shadow: none;
 }
 
 .auth-bg-panel div:first-child {
@@ -2226,24 +2236,6 @@ button.summary-chip:focus-visible {
   border-radius: 12px;
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.58);
-}
-
-.auth-bg-panel-queue {
-  left: max(22px, calc((100vw - 1200px) / 2 - 54px));
-  bottom: 10%;
-  transform: rotate(-4deg);
-}
-
-.auth-bg-panel-mastery {
-  right: max(24px, calc((100vw - 1200px) / 2 - 62px));
-  top: 12%;
-  transform: rotate(5deg);
-}
-
-.auth-bg-panel-review {
-  right: max(34px, calc((100vw - 1200px) / 2 + 42px));
-  bottom: 8%;
-  transform: rotate(-3deg);
 }
 
 .auth-bg-progress {
@@ -2463,6 +2455,10 @@ button.summary-chip:focus-visible {
   .auth-panel {
     justify-self: center;
     max-width: 450px;
+  }
+
+  .auth-background-panels {
+    display: none;
   }
 }
 
