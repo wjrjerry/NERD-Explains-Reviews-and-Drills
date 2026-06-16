@@ -1,15 +1,12 @@
 flowchart LR
-  Frontend["React / Vite 前端"] -->|"/api REST"| API["FastAPI 后端"]
+  Frontend["前端 (Web/App)"] -->|REST / WebSocket| API["FastAPI 后端"]
   API --> Postgres[(PostgreSQL 数据库)]
-  API --> Redis[(Redis 队列与缓存)]
-  API --> Uploads[(上传文件卷)]
-  API --> Worker["Celery Worker"]
-  Worker --> Redis
-  Worker --> Postgres
-  Worker --> Uploads
-  Worker --> OCR["Tesseract OCR / PDF 转图"]
-  API --> AI["mock 或 OpenAI-compatible AI"]
-  Worker --> AI
+  API --> Redis[(Redis 缓存/任务状态)]
+  API --> FileStore[(文件存储，Local / Cloud)]
+  API --> OCR["OCR 服务 (外部或内部)"]
+  API --> AI["AI 模型服务 (外部 API 或内部代理)"]
+  OCR --> API
+  AI --> API
 
-  Note["资料解析、知识提炼和图谱刷新可异步执行"]
-  Worker -.-> Note
+  Note["异步任务（解析/AI 调用）由 Redis / 后台 Worker 管理"]
+  API -.-> Note
