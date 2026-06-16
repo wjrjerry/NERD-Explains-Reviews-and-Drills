@@ -169,6 +169,8 @@ function App() {
   const [knowledge, setKnowledge] = useState<KnowledgeResult | null>(null);
   const [targetKnowledge, setTargetKnowledge] = useState<KnowledgeResult | null>(null);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [graphMaterialKnowledgeLoading, setGraphMaterialKnowledgeLoading] = useState(false);
+  const [graphMaterialKnowledgeError, setGraphMaterialKnowledgeError] = useState<string | null>(null);
   const [structured, setStructured] = useState<MaterialStructured | null>(null);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
   const [preview, setPreview] = useState<MaterialPreview | null>(null);
@@ -320,6 +322,43 @@ function App() {
       setTargetKnowledge(extractionData);
     });
   }, [selectedTargetId, user]);
+
+  useEffect(() => {
+    if (view !== "graph" || !selectedMaterialId || !user) {
+      setGraphMaterialKnowledgeLoading(false);
+      setGraphMaterialKnowledgeError(null);
+      return;
+    }
+
+    const material = selectedMaterial;
+    if (!material || material.parse_status !== "parsed") {
+      setGraphMaterialKnowledgeLoading(false);
+      setGraphMaterialKnowledgeError(null);
+      return;
+    }
+
+    let ignore = false;
+    setGraphMaterialKnowledgeLoading(true);
+    setGraphMaterialKnowledgeError(null);
+    void api
+      .getLatestKnowledge({ materialId: material.id })
+      .catch(() => null)
+      .then((existing) => existing ?? api.extractKnowledge({ materialId: material.id }))
+      .then((extractionData) => {
+        if (ignore) return;
+        setKnowledge(extractionData);
+        setGraphMaterialKnowledgeLoading(false);
+      })
+      .catch((error) => {
+        if (ignore) return;
+        setGraphMaterialKnowledgeLoading(false);
+        setGraphMaterialKnowledgeError(readMessage(error));
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [selectedMaterial?.id, selectedMaterial?.parse_status, selectedMaterialId, user, view]);
 
   useEffect(() => {
     if (!user) {
@@ -1171,6 +1210,9 @@ function App() {
             target={selectedTarget}
             graph={knowledgeGraph}
             targetKnowledge={targetKnowledge}
+            materialKnowledge={knowledge}
+            materialKnowledgeLoading={graphMaterialKnowledgeLoading}
+            materialKnowledgeError={graphMaterialKnowledgeError}
             knowledgeRefreshing={knowledgeRefreshing}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
@@ -1205,10 +1247,12 @@ function App() {
             selectedMaterialId={selectedMaterialId}
             target={selectedTarget}
             material={selectedMaterial}
+            knowledgePoints={knowledgeGraph?.nodes ?? []}
             focusedKnowledgePoints={focusedKnowledgePoints}
             records={qaRecords}
             onSelectTarget={handleSelectLearningTarget}
             onSelectMaterial={handleSelectLearningMaterial}
+            onSelectFocusPoint={(pointId) => setFocusedKnowledgePointIds([pointId])}
             onAsk={handleAskQuestion}
             onClearFocus={() => setFocusedKnowledgePointIds([])}
           />
@@ -2190,6 +2234,9 @@ function KnowledgeGraphPage({
   target,
   graph,
   targetKnowledge,
+  materialKnowledge,
+  materialKnowledgeLoading,
+  materialKnowledgeError,
   knowledgeRefreshing,
   onSelectTarget,
   onSelectMaterial,
@@ -2207,6 +2254,9 @@ function KnowledgeGraphPage({
   target: StudyTarget | null;
   graph: KnowledgeGraph | null;
   targetKnowledge: KnowledgeResult | null;
+  materialKnowledge: KnowledgeResult | null;
+  materialKnowledgeLoading: boolean;
+  materialKnowledgeError: string | null;
   knowledgeRefreshing: boolean;
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
@@ -2250,6 +2300,15 @@ function KnowledgeGraphPage({
   const selectedGraphMaterial = selectedMaterialId
     ? materials.find((material) => material.id === selectedMaterialId) ?? null
     : null;
+  const validMaterialKnowledge =
+    selectedGraphMaterial &&
+    materialKnowledge?.scope === "material" &&
+    materialKnowledge.material_id === selectedGraphMaterial.id
+      ? materialKnowledge
+      : null;
+  const displayedKnowledge = selectedGraphMaterial ? validMaterialKnowledge : targetKnowledge;
+  const knowledgePanelTitle = selectedGraphMaterial ? "资料级知识提炼" : "目标级知识提炼";
+  const knowledgePanelAction = selectedGraphMaterial?.original_filename ?? target?.title;
   const directlyLinkedNodeIds = useMemo(
     () =>
       new Set(
@@ -2318,19 +2377,28 @@ function KnowledgeGraphPage({
         onSelectMaterial={onSelectMaterial}
       />
       <section className="panel target-knowledge-panel">
-        <PanelTitle icon={Sparkles} title="目标级知识提炼" action={target?.title} />
-        {targetKnowledge ? (
+        <PanelTitle icon={Sparkles} title={knowledgePanelTitle} action={knowledgePanelAction} />
+        {materialKnowledgeLoading ? (
+          <p className="muted-text">正在提炼当前资料内容...</p>
+        ) : materialKnowledgeError ? (
+          <p className="danger-text">资料级知识提炼失败：{materialKnowledgeError}</p>
+        ) : displayedKnowledge ? (
           <div className="detail-stack">
-            <p>{targetKnowledge.summary}</p>
+            {displayedKnowledge.scope ? <span className="subtle-pill">{displayedKnowledge.scope === "target" ? "目标级知识提炼" : "资料级知识提炼"}</span> : null}
+            <p>{displayedKnowledge.summary}</p>
             <div className="knowledge-summary-columns">
-              <InfoList title="提纲" items={targetKnowledge.outline} />
-              <InfoList title="关键词" items={targetKnowledge.keywords} />
-              <InfoList title="重点" items={targetKnowledge.key_points} />
-              <InfoList title="考点" items={targetKnowledge.exam_points} />
+              <InfoList title="提纲" items={displayedKnowledge.outline} />
+              <InfoList title="关键词" items={displayedKnowledge.keywords} />
+              <InfoList title="重点" items={displayedKnowledge.key_points} />
+              <InfoList title="考点" items={displayedKnowledge.exam_points} />
             </div>
           </div>
         ) : (
-          <p className="muted-text">当前目标还没有知识提炼结果。完成资料解析或刷新图谱后会自动显示。</p>
+          <p className="muted-text">
+            {selectedGraphMaterial
+              ? "当前资料还没有知识提炼结果，切换到已解析资料后会自动提炼。"
+              : "当前目标还没有知识提炼结果。完成资料解析或刷新图谱后会自动显示。"}
+          </p>
         )}
       </section>
       <div className="graph-content-grid">
@@ -2452,10 +2520,12 @@ function QaPage({
   selectedMaterialId,
   target,
   material,
+  knowledgePoints,
   focusedKnowledgePoints,
   records,
   onSelectTarget,
   onSelectMaterial,
+  onSelectFocusPoint,
   onAsk,
   onClearFocus
 }: {
@@ -2465,16 +2535,19 @@ function QaPage({
   selectedMaterialId: number | null;
   target: StudyTarget | null;
   material: Material | null;
+  knowledgePoints: KnowledgePointReference[];
   focusedKnowledgePoints: KnowledgePointReference[];
   records: QaRecord[];
   onSelectTarget: (targetId: number) => void;
   onSelectMaterial: (materialId: number | null) => void;
+  onSelectFocusPoint: (pointId: number) => void;
   onAsk: (formData: FormData) => void;
   onClearFocus: () => void;
 }) {
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 问答页面。" />;
 
   const defaultScope = focusedKnowledgePoints.length && target ? "knowledge_point" : target ? "target" : "material";
+  const selectedFocusId = focusedKnowledgePoints[0]?.id ?? null;
 
   return (
     <div className="qa-layout">
@@ -2493,18 +2566,37 @@ function QaPage({
         <p className="muted-text">
           当前目标：{target?.title ?? "未选择"}；当前资料：{material?.original_filename ?? "未选择"}
         </p>
-        {focusedKnowledgePoints.length ? (
-          <div className="tag-cloud">
-            {focusedKnowledgePoints.map((point) => <span key={point.id}>{point.name}</span>)}
-            <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button>
+        {target ? (
+          <div className="knowledge-point-picker">
+            <div className="field-label-row">
+              <span>聚焦知识点</span>
+              {selectedFocusId ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
+            </div>
+            {knowledgePoints.length ? (
+              <div className="tag-cloud selectable-tags">
+                {knowledgePoints.map((point) => (
+                  <button
+                    key={point.id}
+                    type="button"
+                    className={selectedFocusId === point.id ? "selected" : ""}
+                    onClick={() => onSelectFocusPoint(point.id)}
+                    title={`按「${point.name}」聚焦问答`}
+                  >
+                    {point.name}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-text">当前目标还没有可选知识点，请先生成知识图谱。</p>
+            )}
           </div>
         ) : null}
-        <select name="qa_scope" defaultValue={defaultScope}>
+        <select name="qa_scope" key={`${defaultScope}-${selectedFocusId ?? "none"}`} defaultValue={defaultScope}>
           <option value="target" disabled={!target}>目标范围</option>
-          <option value="knowledge_point" disabled={!target || !focusedKnowledgePoints.length}>聚焦知识点</option>
+          <option value="knowledge_point" disabled={!target || !selectedFocusId}>聚焦知识点</option>
           <option value="material" disabled={material?.parse_status !== "parsed"}>当前资料</option>
         </select>
-        {focusedKnowledgePoints[0] ? <input type="hidden" name="knowledge_point_id" value={focusedKnowledgePoints[0].id} /> : null}
+        {selectedFocusId ? <input type="hidden" name="knowledge_point_id" value={selectedFocusId} /> : null}
         <textarea name="question" placeholder="提出你的问题，可围绕目标、资料或选中的知识点" required />
         <button className="primary-button" type="submit">
           <MessageSquare size={16} />提交问题
