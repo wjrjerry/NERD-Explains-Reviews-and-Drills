@@ -287,8 +287,6 @@ function App() {
     [materials, selectedTargetId]
   );
 
-  const parsedCount = materials.filter((item) => item.parse_status === "parsed").length;
-  const failedCount = materials.filter((item) => item.parse_status === "failed").length;
   const isAdmin = user?.role === "admin";
   const visibleNavItems = navItems;
 
@@ -1549,8 +1547,6 @@ function App() {
             targets={targets}
             materials={materials}
             selectedTarget={selectedTarget}
-            parsedCount={parsedCount}
-            failedCount={failedCount}
             wrongQuestions={wrongQuestions}
             reviewPlans={reviewPlans}
             testRecords={testRecords}
@@ -2158,7 +2154,7 @@ function getExamCountdown(target: StudyTarget | null) {
   return {
     displayValue: String(daysLeft),
     progressPercent,
-    statusText: rawDaysLeft <= 0 ? "考试日期已到/已过" : `按 ${examProgressWindowDays} 天窗口估算进度`
+    statusText: rawDaysLeft <= 0 ? "考试日期已到/已过" : ""
   };
 }
 
@@ -2209,8 +2205,6 @@ function Dashboard({
   targets,
   materials,
   selectedTarget,
-  parsedCount,
-  failedCount,
   wrongQuestions,
   reviewPlans,
   testRecords,
@@ -2221,8 +2215,6 @@ function Dashboard({
   targets: StudyTarget[];
   materials: Material[];
   selectedTarget: StudyTarget | null;
-  parsedCount: number;
-  failedCount: number;
   wrongQuestions: WrongQuestion[];
   reviewPlans: ReviewPlan[];
   testRecords: TestRecord[];
@@ -2230,15 +2222,12 @@ function Dashboard({
   aiUsageSummary: AiUsageSummary | null;
   onQuickView: (view: View) => void;
 }) {
-  const parseStats = [
-    { label: "可学习", value: parsedCount, tone: "green" },
-    { label: "解析中", value: materials.filter((item) => item.parse_status === "parsing").length, tone: "blue" },
-    { label: "失败", value: failedCount, tone: "red" },
-    { label: "待解析", value: materials.filter((item) => item.parse_status === "uploaded").length, tone: "" }
-  ];
   const primaryTarget = getDashboardTarget(selectedTarget, targets);
   const examCountdown = getExamCountdown(primaryTarget);
   const upcomingTasks = getUpcomingReviewTasks(reviewPlans, 4);
+  const currentMaterialCount = primaryTarget
+    ? materials.filter((item) => item.target_id === primaryTarget.id).length
+    : materials.length;
   const averageAccuracy = testRecords.length
     ? Math.round((testRecords.reduce((sum, item) => sum + item.accuracy, 0) / testRecords.length) * 100)
     : 0;
@@ -2275,27 +2264,12 @@ function Dashboard({
         >
           <strong>{examCountdown.displayValue}</strong>
           <span>距离考试天数</span>
-          <small>{examCountdown.statusText}</small>
+          {examCountdown.statusText ? <small>{examCountdown.statusText}</small> : null}
         </button>
       </section>
 
       <MetricCard icon={BookOpen} label="学习目标" value={targets.length} hint="对应 /study-targets" onClick={() => onQuickView("targets")} />
-      <MetricCard icon={FileText} label="资料总数" value={materials.length} hint="对应 /materials" onClick={() => onQuickView("materials")} />
-      <MetricCard icon={Brain} label="可学习资料" value={parsedCount} hint="parse_status = parsed" onClick={() => onQuickView("materials")} />
-      <MetricCard icon={AlertTriangle} label="失败资料" value={failedCount} hint="需关注 parse_error" onClick={() => onQuickView("materials")} />
-
-      <button className="panel clickable-panel dashboard-panel-button" type="button" onClick={() => onQuickView("materials")}>
-        <PanelTitle icon={FileText} title="资料解析状态" />
-        <div className="stat-bars">
-          {parseStats.map((item) => (
-            <div className="stat-bar" key={item.label}>
-              <span>{item.label}</span>
-              <div><i className={item.tone} style={{ width: `${materials.length ? Math.max(8, (item.value / materials.length) * 100) : 0}%` }} /></div>
-              <strong>{item.value}</strong>
-            </div>
-          ))}
-        </div>
-      </button>
+      <MetricCard icon={FileText} label="当前资料总数" value={currentMaterialCount} hint="对应 /materials" onClick={() => onQuickView("materials")} />
 
       <button className="panel clickable-panel dashboard-panel-button" type="button" onClick={() => onQuickView("graph")}>
         <PanelTitle icon={GitBranch} title="知识点掌握" />
@@ -2312,7 +2286,6 @@ function Dashboard({
 
       <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="来自最近自测记录" onClick={() => onQuickView("practice")} />
       <MetricCard icon={AlertTriangle} label="错题总数" value={wrongQuestions.length} hint="高频薄弱点入口" onClick={() => onQuickView("wrong")} />
-      <MetricCard icon={Bot} label="AI 调用" value={aiUsageSummary?.total_calls ?? 0} hint="本地用量统计" onClick={() => onQuickView("usage")} />
       <MetricCard icon={Sparkles} label="Token 总量" value={formatCompactNumber(aiUsageSummary?.total_tokens ?? 0)} hint="本地计量估算" onClick={() => onQuickView("usage")} />
 
       <section
