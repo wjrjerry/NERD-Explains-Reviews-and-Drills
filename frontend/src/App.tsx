@@ -2689,8 +2689,8 @@ function MaterialsPage({
     <div className="material-library-page">
       <section className="panel material-library-toolbar">
         <div className="toolbar-copy">
-          <PanelTitle icon={FileText} title="资料库" action={selectedTarget?.title ?? "请选择目标"} />
-          <p className="muted-text">当前页面只展示所选学习目标下的资料，上传的新资料也会自动加入该目标。</p>
+          <PanelTitle icon={FileText} title="资料库" />
+          <p className="muted-text">选择学习目标后查看、上传和管理该目标下的资料。</p>
         </div>
         <label className="field-block target-switcher">
           <span>当前学习目标</span>
@@ -2720,12 +2720,12 @@ function MaterialsPage({
         >
           <PanelTitle icon={Upload} title="上传资料" />
           <p className="form-hint">
-            {selectedTarget ? `上传后会加入当前目标：${selectedTarget.title}` : "请先在上方选择学习目标。"}
+            {selectedTarget ? `上传后会自动解析并加入当前目标：${selectedTarget.title}` : "请先在上方选择学习目标。"}
           </p>
           <label className="drop-zone">
             <Upload size={28} />
             <span>选择 PDF / TXT / 图片资料</span>
-            <small>上传后后端会自动解析；TXT 最稳定，PDF/图片会尝试 OCR</small>
+            <small>TXT 最稳定；PDF 和图片会尝试 OCR，内容较长时解析可能需要更久。</small>
             <input
               name="file"
               type="file"

@@ -699,6 +699,12 @@ p {
   background: rgba(0, 122, 255, 0.07);
 }
 
+.drop-zone small {
+  max-width: 100%;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 .drop-zone input {
   display: none;
 }
