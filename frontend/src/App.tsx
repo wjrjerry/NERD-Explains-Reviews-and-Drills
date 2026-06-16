@@ -305,39 +305,29 @@ function App() {
     () => materials.find((item) => item.id === practiceContextMaterialIdEffective) ?? null,
     [materials, practiceContextMaterialIdEffective]
   );
-  const qaMaterialKnowledgePoints = useMemo(
-    () =>
-      qaContextMaterialIdEffective
-        ? qaKnowledgeGraph?.nodes.filter((node) =>
-            node.materials?.some((link) => link.material_id === qaContextMaterialIdEffective)
-          ) ?? []
-        : [],
+  const qaKnowledgePointCandidates = useMemo(
+    () => getKnowledgePointCandidates(qaKnowledgeGraph, qaContextMaterialIdEffective),
     [qaKnowledgeGraph, qaContextMaterialIdEffective]
   );
-  const practiceMaterialKnowledgePoints = useMemo(
-    () =>
-      practiceContextMaterialIdEffective
-        ? practiceKnowledgeGraph?.nodes.filter((node) =>
-            node.materials?.some((link) => link.material_id === practiceContextMaterialIdEffective)
-          ) ?? []
-        : [],
+  const practiceKnowledgePointCandidates = useMemo(
+    () => getKnowledgePointCandidates(practiceKnowledgeGraph, practiceContextMaterialIdEffective),
     [practiceKnowledgeGraph, practiceContextMaterialIdEffective]
   );
-  const qaMaterialKnowledgePointIds = useMemo(
-    () => new Set(qaMaterialKnowledgePoints.map((point) => point.id)),
-    [qaMaterialKnowledgePoints]
+  const qaKnowledgePointCandidateIds = useMemo(
+    () => new Set(qaKnowledgePointCandidates.map((point) => point.id)),
+    [qaKnowledgePointCandidates]
   );
-  const practiceMaterialKnowledgePointIds = useMemo(
-    () => new Set(practiceMaterialKnowledgePoints.map((point) => point.id)),
-    [practiceMaterialKnowledgePoints]
+  const practiceKnowledgePointCandidateIds = useMemo(
+    () => new Set(practiceKnowledgePointCandidates.map((point) => point.id)),
+    [practiceKnowledgePointCandidates]
   );
   const qaFocusedKnowledgePoints = useMemo(
-    () => qaMaterialKnowledgePoints.filter((node) => qaFocusedKnowledgePointIds.includes(node.id)),
-    [qaMaterialKnowledgePoints, qaFocusedKnowledgePointIds]
+    () => qaKnowledgePointCandidates.filter((node) => qaFocusedKnowledgePointIds.includes(node.id)),
+    [qaKnowledgePointCandidates, qaFocusedKnowledgePointIds]
   );
   const practiceFocusedKnowledgePoints = useMemo(
-    () => practiceMaterialKnowledgePoints.filter((node) => practiceFocusedKnowledgePointIds.includes(node.id)),
-    [practiceMaterialKnowledgePoints, practiceFocusedKnowledgePointIds]
+    () => practiceKnowledgePointCandidates.filter((node) => practiceFocusedKnowledgePointIds.includes(node.id)),
+    [practiceKnowledgePointCandidates, practiceFocusedKnowledgePointIds]
   );
   const visibleMaterials = useMemo(
     () => (selectedTargetId ? materials.filter((item) => item.target_id === selectedTargetId) : []),
@@ -549,15 +539,15 @@ function App() {
 
   useEffect(() => {
     setQaFocusedKnowledgePointIds((current) =>
-      current.filter((id) => qaMaterialKnowledgePointIds.has(id))
+      current.filter((id) => qaKnowledgePointCandidateIds.has(id))
     );
-  }, [qaMaterialKnowledgePointIds]);
+  }, [qaKnowledgePointCandidateIds]);
 
   useEffect(() => {
     setPracticeFocusedKnowledgePointIds((current) =>
-      current.filter((id) => practiceMaterialKnowledgePointIds.has(id))
+      current.filter((id) => practiceKnowledgePointCandidateIds.has(id))
     );
-  }, [practiceMaterialKnowledgePointIds]);
+  }, [practiceKnowledgePointCandidateIds]);
 
   useEffect(() => {
     if (view !== "graph" || !graphContextMaterialIdEffective || !user) {
@@ -1240,7 +1230,7 @@ function App() {
       return;
     }
     if (scope === "knowledge_point" && !knowledgePointIds.length) {
-      setNotice({ tone: "danger", text: "请选择至少一个当前资料关联的知识点。" });
+      setNotice({ tone: "danger", text: "请选择至少一个知识点。" });
       return;
     }
 
@@ -1292,7 +1282,7 @@ function App() {
         return;
       }
       if (scope === "knowledge_point" && !knowledgePointIds.length) {
-        setNotice({ tone: "danger", text: "请选择至少一个当前资料关联的知识点。" });
+        setNotice({ tone: "danger", text: "请选择至少一个知识点。" });
         return;
       }
 
@@ -1902,7 +1892,7 @@ function App() {
             selectedMaterialId={qaContextMaterialIdEffective}
             target={qaContextTarget}
             material={qaContextMaterial}
-            knowledgePoints={qaMaterialKnowledgePoints}
+            knowledgePoints={qaKnowledgePointCandidates}
             focusedKnowledgePoints={qaFocusedKnowledgePoints}
             scope={qaScope}
             records={qaRecords}
@@ -1932,7 +1922,7 @@ function App() {
             selectedMaterialId={practiceContextMaterialIdEffective}
             target={practiceContextTarget}
             material={practiceContextMaterial}
-            knowledgePoints={practiceMaterialKnowledgePoints}
+            knowledgePoints={practiceKnowledgePointCandidates}
             focusedKnowledgePoints={practiceFocusedKnowledgePoints}
             scope={practiceScope}
             questions={questions}
@@ -2471,6 +2461,16 @@ function getGraphNodeCaption(
     return "当前范围知识点";
   }
   return displayLevel === 1 ? "顶层知识点" : "当前范围知识点";
+}
+
+function getKnowledgePointCandidates(graph: KnowledgeGraph | null, materialId: number | null) {
+  const nodes = graph?.nodes ?? [];
+  if (!materialId) {
+    return nodes;
+  }
+  return nodes.filter((node) =>
+    node.materials?.some((link) => link.material_id === materialId)
+  );
 }
 
 function handleKeyboardClick(event: KeyboardEvent, callback: () => void) {
@@ -3424,6 +3424,10 @@ function QaPage({
   onClearFocus: () => void;
 }) {
   const selectedFocusIds = new Set(focusedKnowledgePoints.map((point) => point.id));
+  const knowledgePointPickerLabel = material ? "当前资料关联知识点" : "当前目标全部知识点";
+  const knowledgePointEmptyText = material
+    ? "当前资料还没有关联知识点，请先刷新图谱或重新提炼。"
+    : "当前目标还没有知识图谱节点，请先生成或刷新目标图谱。";
 
   if (!target && !material) return <EmptyPanel text="请先选择目标或资料，再进入 AI 问答页面。" />;
 
@@ -3456,7 +3460,7 @@ function QaPage({
         {target && scope === "knowledge_point" ? (
           <div className="knowledge-point-picker">
             <div className="field-label-row">
-              <span>当前资料关联知识点</span>
+              <span>{knowledgePointPickerLabel}</span>
               {focusedKnowledgePoints.length ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
             </div>
             {knowledgePoints.length ? (
@@ -3474,7 +3478,7 @@ function QaPage({
                 ))}
               </div>
             ) : (
-              <p className="muted-text">当前资料还没有关联知识点，请先刷新图谱或重新提炼。</p>
+              <p className="muted-text">{knowledgePointEmptyText}</p>
             )}
           </div>
         ) : null}
@@ -3586,6 +3590,10 @@ function PracticePage({
   const [hintLoading, setHintLoading] = useState<Record<string, boolean>>({});
   const [questionSolutions, setQuestionSolutions] = useState<Record<number, QuestionSolution>>({});
   const selectedFocusIds = new Set(focusedKnowledgePoints.map((point) => point.id));
+  const knowledgePointPickerLabel = material ? "当前资料关联知识点" : "当前目标全部知识点";
+  const knowledgePointEmptyText = material
+    ? "当前资料还没有关联知识点，请先刷新图谱或重新提炼。"
+    : "当前目标还没有知识图谱节点，请先生成或刷新目标图谱。";
 
   useEffect(() => {
     setObjectiveAnswers({});
@@ -3746,7 +3754,7 @@ function PracticePage({
         {scope === "knowledge_point" ? (
           <div className="knowledge-point-picker practice-knowledge-picker">
             <div className="field-label-row">
-              <span>当前资料关联知识点</span>
+              <span>{knowledgePointPickerLabel}</span>
               {focusedKnowledgePoints.length ? <button className="ghost-button" type="button" onClick={onClearFocus}>清除聚焦</button> : null}
             </div>
             {knowledgePoints.length ? (
@@ -3764,7 +3772,7 @@ function PracticePage({
                 ))}
               </div>
             ) : (
-              <p className="muted-text">当前资料还没有关联知识点，请先刷新图谱或重新提炼。</p>
+              <p className="muted-text">{knowledgePointEmptyText}</p>
             )}
           </div>
         ) : null}
