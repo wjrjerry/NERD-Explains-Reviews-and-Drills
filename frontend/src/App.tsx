@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -290,9 +291,6 @@ function App() {
   const failedCount = materials.filter((item) => item.parse_status === "failed").length;
   const isAdmin = user?.role === "admin";
   const visibleNavItems = navItems;
-  const daysLeft = selectedTarget?.exam_date
-    ? Math.max(0, Math.ceil((new Date(selectedTarget.exam_date).getTime() - Date.now()) / 86400000))
-    : 0;
 
   useEffect(() => {
     const token = getToken();
@@ -1550,9 +1548,9 @@ function App() {
           <Dashboard
             targets={targets}
             materials={materials}
+            selectedTarget={selectedTarget}
             parsedCount={parsedCount}
             failedCount={failedCount}
-            daysLeft={daysLeft}
             wrongQuestions={wrongQuestions}
             reviewPlans={reviewPlans}
             testRecords={testRecords}
@@ -2000,7 +1998,7 @@ function AdminLogsPage({ logs }: { logs: AdminLog[] }) {
             <span>{log.target_type}{log.target_id ? ` #${log.target_id}` : ""}</span>
             <span>{log.operation_result}</span>
             <span>{log.remark ?? "无备注"}</span>
-            <span>{new Date(log.created_at).toLocaleString()}</span>
+            <span>{formatDateTimeZh(log.created_at, "无时间")}</span>
           </div>
         ))}
       </div>
@@ -2111,12 +2109,108 @@ function AuthPage({
   );
 }
 
+const examProgressWindowDays = 30;
+
+function getDashboardTarget(selectedTarget: StudyTarget | null, targets: StudyTarget[]) {
+  return selectedTarget ?? targets[0] ?? null;
+}
+
+function parseDateOnly(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const normalized = normalizeDateInput(value);
+  const match = normalized?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day));
+}
+
+function startOfToday() {
+  const today = new Date();
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+}
+
+function daysUntil(value: string | null | undefined) {
+  const date = parseDateOnly(value);
+  if (!date) {
+    return null;
+  }
+  return Math.ceil((date.getTime() - startOfToday().getTime()) / 86400000);
+}
+
+function getExamCountdown(target: StudyTarget | null) {
+  const rawDaysLeft = daysUntil(target?.exam_date);
+  if (rawDaysLeft === null) {
+    return {
+      displayValue: "--",
+      progressPercent: 0,
+      statusText: "未设置考试日期"
+    };
+  }
+
+  const daysLeft = Math.max(0, rawDaysLeft);
+  const progressPercent = rawDaysLeft < 0
+    ? 100
+    : Math.round(Math.max(0, Math.min(1, (examProgressWindowDays - daysLeft) / examProgressWindowDays)) * 100);
+  return {
+    displayValue: String(daysLeft),
+    progressPercent,
+    statusText: rawDaysLeft <= 0 ? "考试日期已到/已过" : `按 ${examProgressWindowDays} 天窗口估算进度`
+  };
+}
+
+function getUpcomingReviewTasks(reviewPlans: ReviewPlan[], limit: number) {
+  return reviewPlans
+    .flatMap((plan) => plan.tasks)
+    .filter((task) => !task.completed)
+    .sort((left, right) => {
+      const leftDate = parseDateOnly(left.date)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightDate = parseDateOnly(right.date)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return leftDate - rightDate || left.id - right.id;
+    })
+    .slice(0, limit);
+}
+
+function reviewTaskTimingLabel(date: string) {
+  const diff = daysUntil(date);
+  if (diff === null) {
+    return "待完成";
+  }
+  if (diff < 0) {
+    return "已逾期";
+  }
+  if (diff === 0) {
+    return "今日待完成";
+  }
+  if (diff === 1) {
+    return "明日待完成";
+  }
+  return "待完成";
+}
+
+function handleKeyboardClick(event: KeyboardEvent, callback: () => void) {
+  if (
+    event.target instanceof HTMLElement
+    && event.target.closest("button, a, input, select, textarea")
+  ) {
+    return;
+  }
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  event.preventDefault();
+  callback();
+}
+
 function Dashboard({
   targets,
   materials,
+  selectedTarget,
   parsedCount,
   failedCount,
-  daysLeft,
   wrongQuestions,
   reviewPlans,
   testRecords,
@@ -2126,9 +2220,9 @@ function Dashboard({
 }: {
   targets: StudyTarget[];
   materials: Material[];
+  selectedTarget: StudyTarget | null;
   parsedCount: number;
   failedCount: number;
-  daysLeft: number;
   wrongQuestions: WrongQuestion[];
   reviewPlans: ReviewPlan[];
   testRecords: TestRecord[];
@@ -2142,36 +2236,55 @@ function Dashboard({
     { label: "失败", value: failedCount, tone: "red" },
     { label: "待解析", value: materials.filter((item) => item.parse_status === "uploaded").length, tone: "" }
   ];
-  const upcomingTasks = reviewPlans.flatMap((plan) => plan.tasks.filter((task) => !task.completed)).slice(0, 4);
+  const primaryTarget = getDashboardTarget(selectedTarget, targets);
+  const examCountdown = getExamCountdown(primaryTarget);
+  const upcomingTasks = getUpcomingReviewTasks(reviewPlans, 4);
   const averageAccuracy = testRecords.length
     ? Math.round((testRecords.reduce((sum, item) => sum + item.accuracy, 0) / testRecords.length) * 100)
     : 0;
 
   return (
     <div className="grid dashboard-grid">
-      <section className="hero-panel">
-        <div>
+      <section
+        className="hero-panel clickable-panel"
+        onClick={() => onQuickView("targets")}
+      >
+        <div
+          className="hero-panel-copy"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => handleKeyboardClick(event, () => onQuickView("targets"))}
+        >
           <p className="eyebrow">当前主目标</p>
-          <h2>{targets[0]?.title ?? "还没有学习目标"}</h2>
-          <p>{targets[0]?.review_goal ?? "先创建一个课程/考试目标，再开始上传资料和 AI 学习。"}</p>
+          <h2>{primaryTarget?.title ?? "还没有学习目标"}</h2>
+          <p>{primaryTarget?.review_goal ?? "先创建一个课程/考试目标，再开始上传资料和 AI 学习。"}</p>
           <div className="quick-actions">
-            <button onClick={() => onQuickView("targets")}><Plus size={16} />新建目标</button>
-            <button onClick={() => onQuickView("materials")}><Upload size={16} />上传资料</button>
-            <button onClick={() => onQuickView("graph")}><Network size={16} />查看图谱</button>
+            <button onClick={(event) => { event.stopPropagation(); onQuickView("targets"); }}><Plus size={16} />新建目标</button>
+            <button onClick={(event) => { event.stopPropagation(); onQuickView("materials"); }}><Upload size={16} />上传资料</button>
+            <button onClick={(event) => { event.stopPropagation(); onQuickView("graph"); }}><Network size={16} />查看图谱</button>
           </div>
         </div>
-        <div className="progress-ring">
-          <strong>{daysLeft}</strong>
+        <button
+          className="progress-ring"
+          type="button"
+          style={{ "--progress-ring-percent": `${examCountdown.progressPercent}%` } as CSSProperties & Record<"--progress-ring-percent", string>}
+          onClick={(event) => {
+            event.stopPropagation();
+            onQuickView("targets");
+          }}
+        >
+          <strong>{examCountdown.displayValue}</strong>
           <span>距离考试天数</span>
-        </div>
+          <small>{examCountdown.statusText}</small>
+        </button>
       </section>
 
-      <MetricCard icon={BookOpen} label="学习目标" value={targets.length} hint="对应 /study-targets" />
-      <MetricCard icon={FileText} label="资料总数" value={materials.length} hint="对应 /materials" />
-      <MetricCard icon={Brain} label="可学习资料" value={parsedCount} hint="parse_status = parsed" />
-      <MetricCard icon={AlertTriangle} label="失败资料" value={failedCount} hint="需关注 parse_error" />
+      <MetricCard icon={BookOpen} label="学习目标" value={targets.length} hint="对应 /study-targets" onClick={() => onQuickView("targets")} />
+      <MetricCard icon={FileText} label="资料总数" value={materials.length} hint="对应 /materials" onClick={() => onQuickView("materials")} />
+      <MetricCard icon={Brain} label="可学习资料" value={parsedCount} hint="parse_status = parsed" onClick={() => onQuickView("materials")} />
+      <MetricCard icon={AlertTriangle} label="失败资料" value={failedCount} hint="需关注 parse_error" onClick={() => onQuickView("materials")} />
 
-      <section className="panel">
+      <button className="panel clickable-panel dashboard-panel-button" type="button" onClick={() => onQuickView("materials")}>
         <PanelTitle icon={FileText} title="资料解析状态" />
         <div className="stat-bars">
           {parseStats.map((item) => (
@@ -2182,9 +2295,9 @@ function Dashboard({
             </div>
           ))}
         </div>
-      </section>
+      </button>
 
-      <section className="panel">
+      <button className="panel clickable-panel dashboard-panel-button" type="button" onClick={() => onQuickView("graph")}>
         <PanelTitle icon={GitBranch} title="知识点掌握" />
         {knowledgeGraph?.nodes.length ? (
           <div className="mastery-strip">
@@ -2195,24 +2308,38 @@ function Dashboard({
         ) : (
           <p className="muted-text">还没有生成知识图谱。</p>
         )}
-      </section>
+      </button>
 
-      <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="来自最近自测记录" />
-      <MetricCard icon={AlertTriangle} label="错题总数" value={wrongQuestions.length} hint="高频薄弱点入口" />
-      <MetricCard icon={Bot} label="AI 调用" value={aiUsageSummary?.total_calls ?? 0} hint="本地用量统计" />
-      <MetricCard icon={Sparkles} label="Token 总量" value={formatCompactNumber(aiUsageSummary?.total_tokens ?? 0)} hint="本地计量估算" />
+      <MetricCard icon={ClipboardCheck} label="近期自测均分" value={`${averageAccuracy}%`} hint="来自最近自测记录" onClick={() => onQuickView("practice")} />
+      <MetricCard icon={AlertTriangle} label="错题总数" value={wrongQuestions.length} hint="高频薄弱点入口" onClick={() => onQuickView("wrong")} />
+      <MetricCard icon={Bot} label="AI 调用" value={aiUsageSummary?.total_calls ?? 0} hint="本地用量统计" onClick={() => onQuickView("usage")} />
+      <MetricCard icon={Sparkles} label="Token 总量" value={formatCompactNumber(aiUsageSummary?.total_tokens ?? 0)} hint="本地计量估算" onClick={() => onQuickView("usage")} />
 
-      <section className="panel wide">
+      <section
+        className="panel wide clickable-panel"
+        role="button"
+        tabIndex={0}
+        onClick={() => onQuickView("plans")}
+        onKeyDown={(event) => handleKeyboardClick(event, () => onQuickView("plans"))}
+      >
         <PanelTitle icon={CalendarDays} title="即将复习任务" />
         <div className="task-list">
           {upcomingTasks.length ? upcomingTasks.map((task) => (
-            <div className="task-row" key={task.id}>
+            <button
+              className="task-row task-row-button"
+              type="button"
+              key={task.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                onQuickView("plans");
+              }}
+            >
               <CheckCircle2 size={18} />
               <div>
                 <strong>{task.title}</strong>
-                <span>{formatDateZh(task.date)} · 待完成</span>
+                <span>{formatDateZh(task.date)} · {reviewTaskTimingLabel(task.date)}</span>
               </div>
-            </div>
+            </button>
           )) : <p className="muted-text">暂无待完成复习任务。</p>}
         </div>
       </section>
@@ -4131,15 +4258,37 @@ function PanelTitle({ icon: Icon, title, action }: { icon: typeof Sparkles; titl
   );
 }
 
-function MetricCard({ icon: Icon, label, value, hint }: { icon: typeof Sparkles; label: string; value: number | string; hint: string }) {
-  return (
-    <section className="metric-card">
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  onClick
+}: {
+  icon: typeof Sparkles;
+  label: string;
+  value: number | string;
+  hint: string;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <Icon size={20} />
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{hint}</small>
-    </section>
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button className="metric-card clickable-panel" type="button" onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+
+  return <section className="metric-card">{content}</section>;
 }
 
 function StatusBadge({ status }: { status: Material["parse_status"] }) {
@@ -4250,10 +4399,21 @@ function formatDateZh(value: string | null | undefined, fallback = "未设置日
 
   const normalized = normalizeDateInput(value);
   const match = normalized?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return value;
+  if (!match) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : formatDateObjectZh(parsed);
+  }
 
   const [, year, month, day] = match;
   return `${year}年${Number(month)}月${Number(day)}日`;
+}
+
+function formatDateObjectZh(date: Date) {
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+function formatTimeObjectZh(date: Date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function formatAnswer(values: string[]) {
@@ -4283,12 +4443,9 @@ function resultToneLabel(tone: ResultTone) {
 
 function formatDateTimeZh(value: string | null | undefined, fallback = "未复习") {
   if (!value) return fallback;
-  return new Date(value).toLocaleString("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${formatDateObjectZh(parsed)} ${formatTimeObjectZh(parsed)}`;
 }
 
 function masteryLabel(status: WrongQuestion["mastery_status"]) {

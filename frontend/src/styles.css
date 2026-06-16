@@ -323,6 +323,12 @@ p {
   line-height: 1.7;
 }
 
+.hero-panel-copy:focus-visible {
+  outline: 3px solid rgba(0, 122, 255, 0.24);
+  outline-offset: 6px;
+  border-radius: 18px;
+}
+
 .quick-actions {
   display: flex;
   flex-wrap: wrap;
@@ -343,9 +349,11 @@ p {
   place-items: center;
   align-content: center;
   border-radius: 50%;
+  color: inherit;
+  text-align: center;
   background:
     radial-gradient(circle, #ffffff 58%, transparent 60%),
-    conic-gradient(#007aff 0 70%, rgba(0, 122, 255, 0.13) 70% 100%);
+    conic-gradient(#007aff 0 var(--progress-ring-percent, 0%), rgba(0, 122, 255, 0.13) var(--progress-ring-percent, 0%) 100%);
 }
 
 .progress-ring strong {
@@ -354,6 +362,28 @@ p {
 
 .progress-ring span {
   color: #6d7788;
+}
+
+.progress-ring small {
+  max-width: 118px;
+  color: #6d7788;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.clickable-panel {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.clickable-panel:hover {
+  border-color: rgba(0, 122, 255, 0.28);
+  box-shadow: 0 28px 78px rgba(44, 57, 82, 0.16);
+  transform: translateY(-1px);
+}
+
+.clickable-panel:focus-visible {
+  outline: 3px solid rgba(0, 122, 255, 0.24);
+  outline-offset: 3px;
 }
 
 .metric-card,
@@ -366,6 +396,8 @@ p {
   display: grid;
   gap: 8px;
   min-height: 150px;
+  color: inherit;
+  text-align: left;
 }
 
 .metric-card svg {
@@ -1548,6 +1580,8 @@ blockquote {
   align-items: flex-start;
   padding: 12px;
   border-radius: 16px;
+  color: inherit;
+  text-align: left;
 }
 
 .task-row > div {
@@ -1571,6 +1605,21 @@ blockquote {
 .task-row.completed strong,
 .task-row.completed .task-content {
   color: #6d7788;
+}
+
+.dashboard-panel-button {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+}
+
+.task-row-button {
+  width: 100%;
+}
+
+.task-row-button:hover {
+  border-color: rgba(0, 122, 255, 0.24);
+  background: rgba(0, 122, 255, 0.06);
 }
 
 .plan-card {
