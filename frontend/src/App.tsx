@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   AlertTriangle,
   BookOpen,
@@ -2756,13 +2758,14 @@ function QaPage({
           {records.map((record) => (
             <article className="chat-card" key={record.qa_record_id}>
               <strong>{record.question}</strong>
-              <p>{record.answer}</p>
+              <div className="chat-answer-markdown">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{record.answer}</ReactMarkdown>
+              </div>
               {record.knowledge_points?.length ? (
                 <div className="tag-cloud">
                   {record.knowledge_points.map((point) => <span key={point.id}>{point.name}</span>)}
                 </div>
               ) : null}
-              {record.references.length ? <blockquote>{record.references[0].snippet}</blockquote> : null}
             </article>
           ))}
         </div>
