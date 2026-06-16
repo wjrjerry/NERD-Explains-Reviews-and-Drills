@@ -6,8 +6,8 @@ from app.services.llm_service import LlmCallTrace
 
 
 def test_estimate_cost_uses_configured_nonzero_prices(monkeypatch):
-    monkeypatch.setattr(settings, "ai_price_prompt_per_1k_tokens", 0.00004815)
-    monkeypatch.setattr(settings, "ai_price_completion_per_1k_tokens", 0.0001931)
+    monkeypatch.setattr(settings, "ai_price_prompt_per_1k_tokens", 0.000326)
+    monkeypatch.setattr(settings, "ai_price_completion_per_1k_tokens", 0.001306)
     monkeypatch.setattr(settings, "ai_price_reasoning_per_1k_tokens", None)
     monkeypatch.setattr(settings, "ai_price_cache_hit_prompt_per_1k_tokens", None)
     monkeypatch.setattr(settings, "ai_price_cache_miss_prompt_per_1k_tokens", None)
@@ -27,4 +27,4 @@ def test_estimate_cost_uses_configured_nonzero_prices(monkeypatch):
         )
     )
 
-    assert cost == Decimal("0.000241")
+    assert cost == Decimal("0.001632")

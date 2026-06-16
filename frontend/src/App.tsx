@@ -199,6 +199,8 @@ function App() {
   const [preview, setPreview] = useState<MaterialPreview | null>(null);
   const [aiUsageSummary, setAiUsageSummary] = useState<AiUsageSummary | null>(null);
   const [aiUsageLogs, setAiUsageLogs] = useState<AiUsageLogItem[]>([]);
+  const [aiUsageLoading, setAiUsageLoading] = useState(false);
+  const [aiUsageError, setAiUsageError] = useState<string | null>(null);
   const [sourcePreview, setSourcePreview] = useState<MaterialSourcePreview | null>(null);
   const [health, setHealth] = useState<{ api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus }>({});
   const [adminSummary, setAdminSummary] = useState<AdminSummary | null>(null);
@@ -499,12 +501,20 @@ function App() {
   }
 
   async function loadAiUsage(targetId?: number, materialId?: number) {
-    const [summary, logs] = await Promise.all([
-      api.getAiUsageSummary(targetId, materialId).catch(() => null),
-      api.listAiUsageLogs(1, 20, targetId, materialId).catch(() => ({ items: [], total: 0, page: 1, page_size: 20 }))
-    ]);
-    setAiUsageSummary(summary);
-    setAiUsageLogs(logs.items);
+    setAiUsageLoading(true);
+    setAiUsageError(null);
+    try {
+      const [summary, logs] = await Promise.all([
+        api.getAiUsageSummary(targetId, materialId),
+        api.listAiUsageLogs(1, 20, targetId, materialId)
+      ]);
+      setAiUsageSummary(summary);
+      setAiUsageLogs(logs.items);
+    } catch (error) {
+      setAiUsageError(readMessage(error));
+    } finally {
+      setAiUsageLoading(false);
+    }
   }
 
   async function loadQaHistoryForCurrentContext(context?: { materialId?: number | null; targetId?: number | null }) {
@@ -1219,6 +1229,8 @@ function App() {
     setPreview(null);
     setAiUsageSummary(null);
     setAiUsageLogs([]);
+    setAiUsageLoading(false);
+    setAiUsageError(null);
     setAiPendingActions(initialAiPendingActions);
     setSourcePreview(null);
     setHealth({});
@@ -1503,6 +1515,8 @@ function App() {
           <AiUsagePage
             summary={aiUsageSummary}
             logs={aiUsageLogs}
+            loading={aiUsageLoading}
+            error={aiUsageError}
             onRefresh={() => void loadAiUsage()}
           />
         ) : null}
@@ -3347,12 +3361,20 @@ function ReviewPlansPage({
 function AiUsagePage({
   summary,
   logs,
+  loading,
+  error,
   onRefresh
 }: {
   summary: AiUsageSummary | null;
   logs: AiUsageLogItem[];
+  loading: boolean;
+  error: string | null;
   onRefresh: () => void;
 }) {
+  const showZeroCostHint = summary
+    ? summary.total_calls > 0 && Number(summary.estimated_cost) === 0
+    : logs.length > 0 && logs.every((log) => Number(log.estimated_cost ?? 0) === 0);
+
   return (
     <div className="grid dashboard-grid">
       <MetricCard icon={Bot} label="总调用次数" value={summary?.total_calls ?? 0} hint="total_calls" />
@@ -3363,8 +3385,15 @@ function AiUsagePage({
       <section className="panel wide">
         <PanelTitle icon={Bot} title="按功能统计" />
         <div className="quick-actions">
-          <button onClick={onRefresh}><RefreshCw size={16} />刷新用量</button>
+          <button type="button" onClick={onRefresh} disabled={loading}>
+            {loading ? <LoaderCircle className="spin-icon" size={16} /> : <RefreshCw size={16} />}
+            {loading ? "刷新中" : "刷新用量"}
+          </button>
         </div>
+        {error ? <p className="warning-text">用量刷新失败：{error}</p> : null}
+        {showZeroCostHint ? (
+          <p className="muted-text">已有调用记录的费用可能按旧价格记录为 0；新 AI 调用会按当前人民币价格计费。</p>
+        ) : null}
         <div className="usage-grid">
           {summary?.by_feature.length ? summary.by_feature.map((item) => (
             <article className="usage-card" key={item.feature}>
@@ -3527,7 +3556,7 @@ function formatCompactNumber(value: number | string) {
   return String(numeric);
 }
 
-function formatMoney(value: number | string | null | undefined, currency = "USD") {
+function formatMoney(value: number | string | null | undefined, currency = "CNY") {
   const numeric = Number(value) || 0;
   return `${numeric.toFixed(4)} ${currency}`;
 }
