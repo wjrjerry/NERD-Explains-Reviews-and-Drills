@@ -1291,7 +1291,9 @@ function App() {
       setReviewPlans((current) =>
         current.map((plan) => ({
           ...plan,
-          tasks: plan.tasks.map((task) => (task.id === updated.id ? updated : task))
+          tasks: sortReviewPlanTasks(
+            plan.tasks.map((task) => (task.id === updated.id ? updated : task))
+          )
         }))
       );
       setNotice({ tone: "success", text: completed ? "复习任务已标为完成。" : "复习任务已取消完成。" });
@@ -2174,6 +2176,17 @@ function getUpcomingReviewTasks(reviewPlans: ReviewPlan[], limit: number) {
       return leftDate - rightDate || left.id - right.id;
     })
     .slice(0, limit);
+}
+
+function sortReviewPlanTasks(tasks: ReviewPlanTask[]) {
+  return [...tasks].sort((left, right) => {
+    if (left.completed !== right.completed) {
+      return left.completed ? 1 : -1;
+    }
+    const leftDate = parseDateOnly(left.date)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    const rightDate = parseDateOnly(right.date)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    return leftDate - rightDate || left.id - right.id;
+  });
 }
 
 function reviewTaskTimingLabel(date: string) {
@@ -4099,7 +4112,7 @@ function ReviewPlansPage({
                 <button onClick={() => onExport(plan.id)}><Download size={16} />导出 Markdown</button>
               </div>
               <div className="task-list">
-                {plan.tasks.map((task) => {
+                {sortReviewPlanTasks(plan.tasks).map((task) => {
                   const isUpdating = updatingTaskIds.has(task.id);
                   return (
                     <div className={`task-row ${task.completed ? "completed" : ""}`} key={task.id}>
