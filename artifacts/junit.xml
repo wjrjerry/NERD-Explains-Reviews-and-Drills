@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="2" tests="16" time="6.766" timestamp="2026-05-28T23:11:50.502714+08:00" hostname="DESKTOP-5PT71Q4"><testcase classname="" name="tests.test_review_plans" time="0.000"><skipped message="collection skipped">('/mnt/c/users/beidian/desktop/SE/大作业/ai-study-backend/tests/test_review_plans.py', 4, 'Skipped: review-plans endpoints not implemented yet')</skipped></testcase><testcase classname="" name="tests.test_tests_and_wrong_questions" time="0.000"><skipped message="collection skipped">('/mnt/c/users/beidian/desktop/SE/大作业/ai-study-backend/tests/test_tests_and_wrong_questions.py', 4, 'Skipped: tests and wrong-questions endpoints not implemented yet')</skipped></testcase><testcase classname="tests.test_ai_flow" name="test_end_to_end_qa_flow" time="1.983" /><testcase classname="tests.test_auth" name="test_register_and_login" time="0.422" /><testcase classname="tests.test_health" name="test_root" time="0.011" /><testcase classname="tests.test_health" name="test_db_health" time="0.013" /><testcase classname="tests.test_health" name="test_redis_health" time="0.008" /><testcase classname="tests.test_materials" name="test_upload_and_preview_txt_material" time="0.489" /><testcase classname="tests.test_security" name="test_user_isolation_on_study_target_access" time="0.863" /><testcase classname="tests.test_security" name="test_admin_permission_enforcement" time="0.449" /><testcase classname="tests.test_security" name="test_expired_token_rejected" time="0.219" /><testcase classname="tests.test_security" name="test_missing_token_rejected" time="0.005" /><testcase classname="tests.test_security" name="test_wrong_scheme_rejected" time="0.006"><failure message="AssertionError: assert '未提供认证令牌' == '认证令牌类型错误'&#10;  &#10;  #x1B[0m#x1B[91m- 认证令牌类型错误#x1B[39;49;00m#x1B[90m#x1B[39;49;00m&#10;  #x1B[92m+ 未提供认证令牌#x1B[39;49;00m#x1B[90m#x1B[39;49;00m">client = &lt;httpx.AsyncClient object at 0x757654281d20&gt;
+
+    @pytest.mark.asyncio
+    async def test_wrong_scheme_rejected(client):
+        # Authorization with wrong scheme should be rejected
+        headers = {"Authorization": "Token abc123"}
+        resp = await client.get("/study-targets", headers=headers)
+        assert resp.status_code == 401
+&gt;       assert resp.json().get("detail") == "认证令牌类型错误"
+E       AssertionError: assert '未提供认证令牌' == '认证令牌类型错误'
+E         
+E         #x1B[0m#x1B[91m- 认证令牌类型错误#x1B[39;49;00m#x1B[90m#x1B[39;49;00m
+E         #x1B[92m+ 未提供认证令牌#x1B[39;49;00m#x1B[90m#x1B[39;49;00m
+
+tests/test_security.py:126: AssertionError</failure></testcase><testcase classname="tests.test_security" name="test_invalid_token_rejected" time="0.006" /><testcase classname="tests.test_security" name="test_disabled_user_forbidden" time="0.446" /><testcase classname="tests.test_study_targets" name="test_create_and_get_study_target" time="0.472" /></testsuite></testsuites>

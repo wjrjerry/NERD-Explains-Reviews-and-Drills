@@ -5,6 +5,8 @@ import {
   Bot,
   Brain,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   CheckCircle2,
   ClipboardCheck,
   Download,
@@ -20,7 +22,6 @@ import {
   RefreshCw,
   Shield,
   Sparkles,
-  TableOfContents,
   Trash2,
   Upload,
   UserCircle,
@@ -28,6 +29,9 @@ import {
 } from "lucide-react";
 import { api, clearToken, getToken } from "./api";
 import type {
+  AdminLog,
+  AdminParseTask,
+  AdminSummary,
   AiUsageLogItem,
   AiUsageSummary,
   Difficulty,
@@ -40,6 +44,8 @@ import type {
   Material,
   MaterialPreview,
   MaterialStructured,
+  ParseStatus,
+  ParseTaskStatus,
   QaRecord,
   Question,
   QuestionSolution,
@@ -64,8 +70,9 @@ type View =
   | "results"
   | "wrong"
   | "plans"
-  | "usage"
-  | "admin";
+  | "usage";
+
+type AdminView = "overview" | "users" | "materials" | "tasks" | "logs" | "health";
 
 type NoticeTone = "info" | "success" | "danger" | "warning";
 
@@ -73,6 +80,8 @@ type Notice = {
   tone: NoticeTone;
   text: string;
 };
+
+type LoginRole = "student" | "admin";
 
 type MaterialSourcePreview = {
   materialId: number;
@@ -97,8 +106,16 @@ const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard 
   { view: "results", label: "测试结果", icon: CheckCircle2 },
   { view: "wrong", label: "错题本", icon: AlertTriangle },
   { view: "plans", label: "复习计划", icon: CalendarDays },
-  { view: "usage", label: "AI 用量", icon: Bot },
-  { view: "admin", label: "管理员端", icon: Shield }
+  { view: "usage", label: "AI 用量", icon: Bot }
+];
+
+const adminNavItems: Array<{ view: AdminView; label: string; icon: typeof LayoutDashboard }> = [
+  { view: "overview", label: "后台总览", icon: LayoutDashboard },
+  { view: "users", label: "用户管理", icon: UserCircle },
+  { view: "materials", label: "资料管理", icon: FileText },
+  { view: "tasks", label: "解析任务", icon: AlertTriangle },
+  { view: "logs", label: "操作日志", icon: CalendarDays },
+  { view: "health", label: "系统健康", icon: Shield }
 ];
 
 const parseStatusText: Record<Material["parse_status"], string> = {
@@ -133,8 +150,14 @@ const questionTypeOptions: Array<{ value: QuestionType; label: string }> = [
   { value: "subjective", label: "主观题" }
 ];
 
+function normalizeHealthStatus(value: HealthStatus | null | undefined, key?: "db" | "redis"): HealthStatus {
+  const status = value?.status ?? (key ? value?.[key] : undefined) ?? "error";
+  return { ...value, status };
+}
+
 function App() {
   const [view, setView] = useState<View>("dashboard");
+  const [adminView, setAdminView] = useState<AdminView>("overview");
   const [user, setUser] = useState<User | null>(null);
   const [targets, setTargets] = useState<StudyTarget[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -153,6 +176,11 @@ function App() {
   const [aiUsageLogs, setAiUsageLogs] = useState<AiUsageLogItem[]>([]);
   const [sourcePreview, setSourcePreview] = useState<MaterialSourcePreview | null>(null);
   const [health, setHealth] = useState<{ api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus }>({});
+  const [adminSummary, setAdminSummary] = useState<AdminSummary | null>(null);
+  const [adminUsers, setAdminUsers] = useState<User[]>([]);
+  const [adminMaterials, setAdminMaterials] = useState<Material[]>([]);
+  const [adminTasks, setAdminTasks] = useState<AdminParseTask[]>([]);
+  const [adminLogs, setAdminLogs] = useState<AdminLog[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
   const [focusedKnowledgePointIds, setFocusedKnowledgePointIds] = useState<number[]>([]);
@@ -182,6 +210,8 @@ function App() {
 
   const parsedCount = materials.filter((item) => item.parse_status === "parsed").length;
   const failedCount = materials.filter((item) => item.parse_status === "failed").length;
+  const isAdmin = user?.role === "admin";
+  const visibleNavItems = navItems;
   const daysLeft = selectedTarget?.exam_date
     ? Math.max(0, Math.ceil((new Date(selectedTarget.exam_date).getTime() - Date.now()) / 86400000))
     : 0;
@@ -328,7 +358,7 @@ function App() {
     try {
       const me = await api.me();
       setUser(me.user);
-      await Promise.all([loadDashboardData(), loadAdminHealth()]);
+      await loadDataForUser(me.user);
       setNotice({ tone: "success", text: "已使用本地 token 初始化会话。" });
     } catch (error) {
       clearToken();
@@ -337,6 +367,34 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadDataForUser(nextUser: User) {
+    if (nextUser.role === "admin") {
+      setAdminView("overview");
+      await loadAdminData();
+      return;
+    }
+
+    setHealth({});
+    setView("dashboard");
+    await loadDashboardData();
+  }
+
+  async function loadAdminData() {
+    const [summary, users, materialsData, tasks, logs] = await Promise.all([
+      api.getAdminSummary(),
+      api.listAdminUsers(1, 50),
+      api.listAdminMaterials(1, 50),
+      api.listAdminTasks(1, 50),
+      api.listAdminLogs(1, 50)
+    ]);
+    setAdminSummary(summary);
+    setAdminUsers(users.items);
+    setAdminMaterials(materialsData.items);
+    setAdminTasks(tasks.items);
+    setAdminLogs(logs.items);
+    await loadAdminHealth();
   }
 
   async function loadDashboardData() {
@@ -382,9 +440,9 @@ function App() {
   async function loadAdminHealth() {
     const [apiStatus, dbStatus, redisStatus] = await Promise.allSettled([api.health(), api.healthDb(), api.healthRedis()]);
     setHealth({
-      api: apiStatus.status === "fulfilled" ? apiStatus.value : { status: "error" },
-      db: dbStatus.status === "fulfilled" ? dbStatus.value : { status: "error" },
-      redis: redisStatus.status === "fulfilled" ? redisStatus.value : { status: "error" }
+      api: apiStatus.status === "fulfilled" ? normalizeHealthStatus(apiStatus.value) : { status: "error" },
+      db: dbStatus.status === "fulfilled" ? normalizeHealthStatus(dbStatus.value, "db") : { status: "error" },
+      redis: redisStatus.status === "fulfilled" ? normalizeHealthStatus(redisStatus.value, "redis") : { status: "error" }
     });
   }
 
@@ -506,6 +564,7 @@ function App() {
   async function handleLogin(formData: FormData) {
     const username = String(formData.get("username") ?? "").trim();
     const password = String(formData.get("password") ?? "");
+    const loginRole = String(formData.get("login_role") ?? "student") as LoginRole;
     if (!username || !password) {
       setNotice({ tone: "danger", text: "请输入用户名和密码。" });
       return;
@@ -514,9 +573,16 @@ function App() {
     setLoading(true);
     try {
       const nextUser = await api.login(username, password);
+      if (loginRole === "admin" && nextUser.role !== "admin") {
+        clearToken();
+        setUser(null);
+        setHealth({});
+        setNotice({ tone: "danger", text: "该账号不是管理员，请使用管理员账号登录。" });
+        return;
+      }
       setUser(nextUser);
-      await Promise.all([loadDashboardData(), loadAdminHealth()]);
-      setNotice({ tone: "success", text: "登录成功，已同步后端数据。" });
+      await loadDataForUser(nextUser);
+      setNotice({ tone: "success", text: nextUser.role === "admin" ? "管理员登录成功。" : "登录成功，已同步后端数据。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `登录失败：${readMessage(error)}` });
     } finally {
@@ -538,7 +604,7 @@ function App() {
       await api.register(username, password, displayName || username);
       const nextUser = await api.login(username, password);
       setUser(nextUser);
-      await Promise.all([loadDashboardData(), loadAdminHealth()]);
+      await loadDataForUser(nextUser);
       setNotice({ tone: "success", text: "注册成功，已自动登录。" });
     } catch (error) {
       setNotice({ tone: "danger", text: `注册失败：${readMessage(error)}` });
@@ -884,6 +950,36 @@ function App() {
     }
   }
 
+  async function handleRefreshAdminData() {
+    try {
+      await loadAdminData();
+      setNotice({ tone: "success", text: "管理员后台数据已刷新。" });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `管理员后台数据加载失败：${readMessage(error)}` });
+    }
+  }
+
+  async function handleUpdateAdminUserStatus(userId: number, isActive: boolean) {
+    try {
+      const updated = await api.updateAdminUserStatus(userId, isActive);
+      setAdminUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      await loadAdminData();
+      setNotice({ tone: "success", text: `用户已${updated.is_active ? "启用" : "禁用"}。` });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `用户状态更新失败：${readMessage(error)}` });
+    }
+  }
+
+  async function handleRetryAdminTask(taskId: number) {
+    try {
+      await api.retryAdminTask(taskId);
+      await loadAdminData();
+      setNotice({ tone: "success", text: "失败任务已重新入队。" });
+    } catch (error) {
+      setNotice({ tone: "danger", text: `任务重试失败：${readMessage(error)}` });
+    }
+  }
+
   function handleLogout() {
     clearToken();
     setUser(null);
@@ -903,6 +999,14 @@ function App() {
     setAiUsageSummary(null);
     setAiUsageLogs([]);
     setSourcePreview(null);
+    setHealth({});
+    setAdminSummary(null);
+    setAdminUsers([]);
+    setAdminMaterials([]);
+    setAdminTasks([]);
+    setAdminLogs([]);
+    setAdminView("overview");
+    setView("dashboard");
     setSelectedTargetId(null);
     setSelectedMaterialId(null);
     setFocusedKnowledgePointIds([]);
@@ -915,6 +1019,29 @@ function App() {
       <>
         <AuthPage loading={loading} notice={notice} onLogin={handleLogin} onRegister={handleRegister} onCloseNotice={() => setNotice(null)} />
       </>
+    );
+  }
+
+  if (isAdmin) {
+    return (
+      <AdminShell
+        user={user}
+        view={adminView}
+        onViewChange={setAdminView}
+        notice={notice}
+        loading={loading}
+        onCloseNotice={() => setNotice(null)}
+        onLogout={handleLogout}
+        onRefresh={() => void handleRefreshAdminData()}
+        health={health}
+        summary={adminSummary}
+        users={adminUsers}
+        materials={adminMaterials}
+        tasks={adminTasks}
+        logs={adminLogs}
+        onUpdateUserStatus={(userId, isActive) => void handleUpdateAdminUserStatus(userId, isActive)}
+        onRetryTask={(taskId) => void handleRetryAdminTask(taskId)}
+      />
     );
   }
 
@@ -932,7 +1059,7 @@ function App() {
         </div>
 
         <nav>
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = view === item.view || (view === "detail" && item.view === "materials");
             return (
@@ -1021,7 +1148,6 @@ function App() {
             target={selectedTarget}
             preview={preview}
             sourcePreview={sourcePreview}
-            structured={structured}
             knowledge={knowledge}
             knowledgeRefreshing={knowledgeRefreshing}
             onRefreshKnowledge={() => void handleRefreshSelectedMaterialKnowledge()}
@@ -1140,9 +1266,249 @@ function App() {
             onRefresh={() => void loadAiUsage()}
           />
         ) : null}
-
-        {view === "admin" ? <AdminPage health={health} materials={materials} /> : null}
       </main>
+    </div>
+  );
+}
+
+function AdminShell({
+  user,
+  view,
+  onViewChange,
+  notice,
+  loading,
+  onCloseNotice,
+  onLogout,
+  onRefresh,
+  health,
+  summary,
+  users,
+  materials,
+  tasks,
+  logs,
+  onUpdateUserStatus,
+  onRetryTask
+}: {
+  user: User;
+  view: AdminView;
+  onViewChange: (view: AdminView) => void;
+  notice: Notice | null;
+  loading: boolean;
+  onCloseNotice: () => void;
+  onLogout: () => void;
+  onRefresh: () => void;
+  health: { api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus };
+  summary: AdminSummary | null;
+  users: User[];
+  materials: Material[];
+  tasks: AdminParseTask[];
+  logs: AdminLog[];
+  onUpdateUserStatus: (userId: number, isActive: boolean) => void;
+  onRetryTask: (taskId: number) => void;
+}) {
+  return (
+    <div className="app-shell admin-shell">
+      <aside className="sidebar admin-sidebar">
+        <div className="brand">
+          <div className="brand-mark">
+            <Shield size={20} />
+          </div>
+          <div>
+            <strong>管理员后台</strong>
+            <span>系统数据与运维中心</span>
+          </div>
+        </div>
+
+        <nav>
+          {adminNavItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.view} className={view === item.view ? "active" : ""} onClick={() => onViewChange(item.view)}>
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="profile-card">
+          <UserCircle size={30} />
+          <div>
+            <strong>{user.display_name ?? user.username}</strong>
+            <span>admin</span>
+          </div>
+          <button className="icon-button" onClick={onLogout} title="退出登录">
+            <LogOut size={16} />
+          </button>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div>
+            <h1>{adminPageTitle(view)}</h1>
+          </div>
+          <button className="ghost-button" onClick={onRefresh}>
+            <RefreshCw size={16} />
+            刷新后台数据
+          </button>
+        </header>
+
+        {notice ? <NoticeBar notice={notice} onClose={onCloseNotice} /> : null}
+        {loading ? <LoadingBanner /> : null}
+
+        {view === "overview" ? <AdminOverview summary={summary} health={health} /> : null}
+        {view === "users" ? <AdminUsersPage users={users} currentUserId={user.id} onUpdateUserStatus={onUpdateUserStatus} /> : null}
+        {view === "materials" ? <AdminMaterialsPage materials={materials} /> : null}
+        {view === "tasks" ? <AdminTasksPage tasks={tasks} onRetryTask={onRetryTask} /> : null}
+        {view === "logs" ? <AdminLogsPage logs={logs} /> : null}
+        {view === "health" ? <AdminHealthPage health={health} /> : null}
+      </main>
+    </div>
+  );
+}
+
+function AdminOverview({
+  summary,
+  health
+}: {
+  summary: AdminSummary | null;
+  health: { api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus };
+}) {
+  const failedMaterials = summary?.material_parse_status.failed ?? 0;
+
+  return (
+    <div className="grid admin-grid">
+      <MetricCard icon={UserCircle} label="注册人数" value={summary?.total_users ?? 0} hint="未删除用户" />
+      <MetricCard icon={UserCircle} label="学生 / 管理员" value={`${summary?.student_users ?? 0} / ${summary?.admin_users ?? 0}`} hint="role 分布" />
+      <MetricCard icon={Shield} label="启用 / 禁用" value={`${summary?.active_users ?? 0} / ${summary?.inactive_users ?? 0}`} hint="账号状态" />
+      <MetricCard icon={FileText} label="资料总数" value={summary?.total_materials ?? 0} hint="全站资料" />
+      <MetricCard icon={AlertTriangle} label="失败资料" value={failedMaterials} hint="parse_status = failed" />
+      <MetricCard icon={AlertTriangle} label="失败任务" value={summary?.failed_tasks ?? 0} hint="task_status = failed" />
+      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="GET /health/db" />
+      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="GET /health/redis" />
+
+      <section className="panel wide">
+        <PanelTitle icon={AlertTriangle} title="解析状态分布" />
+        <div className="usage-grid">
+          {(["uploaded", "parsing", "parsed", "failed"] as ParseStatus[]).map((status) => (
+            <article className="usage-card" key={status}>
+              <strong>{parseStatusText[status]}</strong>
+              <span>{summary?.material_parse_status[status] ?? 0} 份资料</span>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AdminUsersPage({
+  users,
+  currentUserId,
+  onUpdateUserStatus
+}: {
+  users: User[];
+  currentUserId: number;
+  onUpdateUserStatus: (userId: number, isActive: boolean) => void;
+}) {
+  return (
+    <section className="panel wide">
+      <PanelTitle icon={UserCircle} title="用户管理" action={`${users.length} 条`} />
+      <div className="admin-table admin-users-table">
+        {users.map((item) => (
+          <div key={item.id}>
+            <span>{item.username}</span>
+            <span>{item.display_name ?? "未设置"}</span>
+            <span>{item.role}</span>
+            <span>{item.is_active ? "启用" : "禁用"}</span>
+            <button
+              disabled={item.id === currentUserId}
+              onClick={() => onUpdateUserStatus(item.id, !item.is_active)}
+            >
+              {item.is_active ? "禁用" : "启用"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminMaterialsPage({ materials }: { materials: Material[] }) {
+  return (
+    <section className="panel wide">
+      <PanelTitle icon={FileText} title="资料管理" action={`${materials.length} 条`} />
+      <div className="admin-table admin-materials-table">
+        {materials.map((material) => (
+          <div key={material.id}>
+            <span>{material.original_filename}</span>
+            <span>用户 {material.user_id ?? "-"}</span>
+            <span>目标 {material.target_id}</span>
+            <StatusBadge status={material.parse_status} />
+            <span>{material.parse_error || material.parse_warning || "无异常"}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminTasksPage({
+  tasks,
+  onRetryTask
+}: {
+  tasks: AdminParseTask[];
+  onRetryTask: (taskId: number) => void;
+}) {
+  return (
+    <section className="panel wide">
+      <PanelTitle icon={AlertTriangle} title="解析任务" action={`${tasks.length} 条`} />
+      <div className="admin-table admin-tasks-table">
+        {tasks.map((task) => (
+          <div key={task.id}>
+            <span>任务 {task.id}</span>
+            <span>资料 {task.material_id}</span>
+            <span>用户 {task.user_id}</span>
+            <span>{task.task_status}</span>
+            <span>{task.failure_reason || "无异常"}</span>
+            <button disabled={task.task_status !== "failed"} onClick={() => onRetryTask(task.id)}>重试</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminLogsPage({ logs }: { logs: AdminLog[] }) {
+  return (
+    <section className="panel wide">
+      <PanelTitle icon={CalendarDays} title="操作日志" action={`${logs.length} 条`} />
+      <div className="admin-table admin-logs-table">
+        {logs.map((log) => (
+          <div key={log.id}>
+            <span>{log.operation_type}</span>
+            <span>{log.target_type}{log.target_id ? ` #${log.target_id}` : ""}</span>
+            <span>{log.operation_result}</span>
+            <span>{log.remark ?? "无备注"}</span>
+            <span>{new Date(log.created_at).toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminHealthPage({
+  health
+}: {
+  health: { api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus };
+}) {
+  return (
+    <div className="grid admin-grid">
+      <MetricCard icon={Shield} label="API 健康" value={health.api?.status ?? "error"} hint="GET /health" />
+      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="GET /health/db" />
+      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="GET /health/redis" />
     </div>
   );
 }
@@ -1161,6 +1527,7 @@ function AuthPage({
   onCloseNotice: () => void;
 }) {
   const [mode, setMode] = useState<"login" | "register">("login");
+  const [loginRole, setLoginRole] = useState<LoginRole>("student");
 
   return (
     <div className="auth-screen">
@@ -1185,12 +1552,31 @@ function AuthPage({
       <form className="auth-panel" onSubmit={(event) => submitForm(event, mode === "login" ? onLogin : onRegister)}>
         <div>
           <p className="eyebrow">{mode === "login" ? "欢迎回来" : "创建学习账号"}</p>
-          <h1>{mode === "login" ? "登录" : "注册"}</h1>
+          <h1>{mode === "login" ? (loginRole === "admin" ? "管理员登录" : "学生登录") : "学生注册"}</h1>
         </div>
 
         {notice ? <NoticeBar notice={notice} onClose={onCloseNotice} /> : null}
         {loading ? <LoadingBanner /> : null}
 
+        {mode === "login" ? (
+          <div className="auth-role-switch" role="tablist" aria-label="登录身份">
+            <button
+              type="button"
+              className={loginRole === "student" ? "active" : ""}
+              onClick={() => setLoginRole("student")}
+            >
+              学生登录
+            </button>
+            <button
+              type="button"
+              className={loginRole === "admin" ? "active" : ""}
+              onClick={() => setLoginRole("admin")}
+            >
+              管理员登录
+            </button>
+          </div>
+        ) : null}
+        {mode === "login" ? <input type="hidden" name="login_role" value={loginRole} /> : null}
         <input name="username" placeholder="用户名" minLength={3} required />
         <input name="password" type="password" placeholder="密码" minLength={6} required />
         {mode === "register" ? <input name="display_name" placeholder="昵称（可选）" /> : null}
@@ -1199,7 +1585,14 @@ function AuthPage({
           <UserCircle size={16} />
           {mode === "login" ? "登录并同步数据" : "注册并登录"}
         </button>
-        <button className="ghost-button" type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+        <button
+          className="ghost-button"
+          type="button"
+          onClick={() => {
+            setMode(mode === "login" ? "register" : "login");
+            setLoginRole("student");
+          }}
+        >
           {mode === "login" ? "没有账号？创建新账号" : "已有账号？返回登录"}
         </button>
       </form>
@@ -1520,7 +1913,6 @@ function MaterialDetailPage({
   target,
   preview,
   sourcePreview,
-  structured,
   knowledge,
   knowledgeRefreshing,
   onRefreshKnowledge,
@@ -1533,7 +1925,6 @@ function MaterialDetailPage({
   target: StudyTarget | null;
   preview: MaterialPreview | null;
   sourcePreview: MaterialSourcePreview | null;
-  structured: MaterialStructured | null;
   knowledge: KnowledgeResult | null;
   knowledgeRefreshing: boolean;
   onRefreshKnowledge: () => void;
@@ -1548,7 +1939,7 @@ function MaterialDetailPage({
 
   return (
     <div className="grid learn-grid">
-      <section className="panel wide">
+      <section className="panel full-width">
         <div className="subpage-header">
           <div>
             <span className="breadcrumb-line">
@@ -1582,60 +1973,105 @@ function MaterialDetailPage({
         </div>
       </section>
 
-      <section className="panel">
-        <PanelTitle icon={FileText} title="资料预览" />
-        <p className="preview-box">
-          {preview?.preview_text ||
-            (material.parse_status === "parsing"
-              ? "资料正在解析，完成后会自动刷新预览。"
-              : material.parse_status === "uploaded"
-                ? "等待后台解析或手动触发解析。"
-                : material.parse_status === "failed"
-                  ? "资料解析失败，暂无文本预览。"
-                  : "当前资料暂无文本预览。")}
-        </p>
-      </section>
+      <div className={`detail-panel-grid ${knowledge ? "has-knowledge" : ""}`}>
+        <section className="panel parsed-preview-panel">
+          <PanelTitle icon={FileText} title="资料预览" />
+          <ParsedTextPreview material={material} preview={preview} />
+        </section>
 
-      <section className="panel source-panel">
-        <PanelTitle icon={ExternalLink} title="源文件预览" />
-        <SourceFilePreview material={material} sourcePreview={sourcePreview} />
-      </section>
-
-      <section className="panel">
-        <PanelTitle icon={TableOfContents} title="结构化章节" />
-        {structured?.sections.length || structured?.chunks.length ? (
-          <>
-            <StructuredReader structured={structured} />
-            <StructuredArtifacts structured={structured} />
-          </>
-        ) : (
-          <p className="muted-text">
-            {material.parse_status === "parsing"
-              ? "资料正在解析，完成后会自动刷新章节结构。"
-              : material.parse_status === "uploaded"
-                ? "等待后台解析或手动触发解析。"
-                : material.parse_status === "failed"
-                  ? "资料解析失败，修复后可重试解析。"
-                  : "已解析，但未识别出章节结构，可继续使用预览和 AI 功能。"}
-          </p>
-        )}
-      </section>
-
-      <section className="panel">
-        <PanelTitle icon={Bot} title="资料级知识提炼结果" />
         {knowledge ? (
-          <div className="detail-stack">
-            <span className="subtle-pill">资料级知识提炼</span>
-            <p>{knowledge.summary}</p>
-            <InfoList title="提纲" items={knowledge.outline} />
-            <InfoList title="关键词" items={knowledge.keywords} />
-            <InfoList title="重点" items={knowledge.key_points} />
-            <InfoList title="考点" items={knowledge.exam_points} />
-          </div>
-        ) : (
-          <p className="muted-text">还没有知识提炼结果。</p>
-        )}
-      </section>
+          <section className="panel knowledge-result-panel">
+            <PanelTitle icon={Bot} title="知识提炼结果" />
+            <div className="detail-stack">
+              {knowledge.scope ? <span className="subtle-pill">{knowledge.scope === "target" ? "目标级知识提炼" : "资料级知识提炼"}</span> : null}
+              <p>{knowledge.summary}</p>
+              <InfoList title="提纲" items={knowledge.outline} />
+              <InfoList title="关键词" items={knowledge.keywords} />
+              <InfoList title="重点" items={knowledge.key_points} />
+              <InfoList title="考点" items={knowledge.exam_points} />
+            </div>
+          </section>
+        ) : null}
+
+        <section className="panel source-panel">
+          <PanelTitle icon={ExternalLink} title="源文件预览" />
+          <SourceFilePreview material={material} sourcePreview={sourcePreview} />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+const parsedPreviewPageSize = 2000;
+
+function ParsedTextPreview({
+  material,
+  preview
+}: {
+  material: Material;
+  preview: MaterialPreview | null;
+}) {
+  const [page, setPage] = useState(0);
+  const parsedText = preview?.parsed_text?.trim() || preview?.preview_text?.trim() || "";
+  const pages = useMemo(() => {
+    if (!parsedText) {
+      return [];
+    }
+    const nextPages: string[] = [];
+    for (let index = 0; index < parsedText.length; index += parsedPreviewPageSize) {
+      nextPages.push(parsedText.slice(index, index + parsedPreviewPageSize));
+    }
+    return nextPages;
+  }, [parsedText]);
+  const pageCount = pages.length;
+  const currentPage = Math.min(page, Math.max(pageCount - 1, 0));
+
+  useEffect(() => {
+    setPage(0);
+  }, [material.id, parsedText]);
+
+  if (!parsedText) {
+    return (
+      <div className="parsed-preview-empty">
+        <p className="muted-text">
+          {material.parse_status === "parsing"
+            ? "资料正在解析，完成后会自动刷新解析文本。"
+            : material.parse_status === "uploaded"
+              ? "等待后台解析或手动触发解析。"
+              : material.parse_status === "failed"
+                ? "资料解析失败，暂无解析文本。"
+                : "当前资料暂无解析文本。"}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="parsed-preview-reader">
+      <div className="parsed-preview-toolbar">
+        <span>{material.file_type.toUpperCase()} · 解析文本 · 第 {currentPage + 1} / {pageCount} 页</span>
+        <div className="preview-pager">
+          <button
+            type="button"
+            disabled={currentPage === 0}
+            onClick={() => setPage((value) => Math.max(value - 1, 0))}
+          >
+            <ChevronLeft size={16} />
+            上一页
+          </button>
+          <button
+            type="button"
+            disabled={currentPage >= pageCount - 1}
+            onClick={() => setPage((value) => Math.min(value + 1, pageCount - 1))}
+          >
+            下一页
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+      <article className="parsed-preview-page">
+        {pages[currentPage]}
+      </article>
     </div>
   );
 }
@@ -1743,41 +2179,6 @@ function LearningContextSelector({
           : "请先选择目标，再进行图谱、问答或出题。"}
       </p>
     </section>
-  );
-}
-
-function StructuredReader({ structured }: { structured: MaterialStructured }) {
-  const [activeSectionId, setActiveSectionId] = useState<number | null>(structured.sections[0]?.id ?? null);
-  const visibleChunks = structured.chunks.filter((chunk) => !activeSectionId || chunk.section_id === activeSectionId).slice(0, 12);
-
-  useEffect(() => {
-    setActiveSectionId(structured.sections[0]?.id ?? null);
-  }, [structured.material_id]);
-
-  return (
-    <div className="reader-layout">
-      <div className="section-nav">
-        {structured.sections.length ? structured.sections.map((section) => (
-          <button
-            key={section.id}
-            className={activeSectionId === section.id ? "active-pill" : ""}
-            style={{ paddingLeft: `${10 + section.level * 12}px` }}
-            onClick={() => setActiveSectionId(section.id)}
-          >
-            {section.title}
-          </button>
-        )) : <p className="muted-text">未识别出章节。</p>}
-      </div>
-      <div className="chunk-list">
-        {visibleChunks.length ? visibleChunks.map((chunk) => (
-          <article key={chunk.id} className="chunk-card">
-            <strong>{chunk.title || `文本块 ${chunk.order_index + 1}`}</strong>
-            <span>{chunk.chunk_type}{chunk.source_page ? ` · 第 ${chunk.source_page} 页` : ""}</span>
-            <p>{chunk.text}</p>
-          </article>
-        )) : <p className="muted-text">当前章节暂无文本块。</p>}
-      </div>
-    </div>
   );
 }
 
@@ -2617,24 +3018,6 @@ function ReviewPlansPage({
   );
 }
 
-function StructuredArtifacts({ structured }: { structured: MaterialStructured }) {
-  const figures = structured.figures ?? [];
-  const tables = structured.tables ?? [];
-  const formulas = structured.formulas ?? [];
-
-  if (!figures.length && !tables.length && !formulas.length) {
-    return null;
-  }
-
-  return (
-    <div className="artifact-grid">
-      {figures.length ? <InfoList title="图片/图形说明" items={figures.slice(0, 4).map((item) => item.description)} /> : null}
-      {tables.length ? <InfoList title="表格" items={tables.slice(0, 3).map((item) => item.title || item.content)} /> : null}
-      {formulas.length ? <InfoList title="公式" items={formulas.slice(0, 4).map((item) => `${item.expression}${item.explanation ? `：${item.explanation}` : ""}`)} /> : null}
-    </div>
-  );
-}
-
 function AiUsagePage({
   summary,
   logs,
@@ -2678,37 +3061,6 @@ function AiUsagePage({
               <span>{formatMoney(log.estimated_cost, log.currency)} · {log.model ?? log.provider}</span>
             </div>
           )) : <p className="muted-text">暂无调用日志。</p>}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function AdminPage({
-  health,
-  materials
-}: {
-  health: { api?: HealthStatus; db?: HealthStatus; redis?: HealthStatus };
-  materials: Material[];
-}) {
-  return (
-    <div className="grid admin-grid">
-      <MetricCard icon={Shield} label="API 健康" value={health.api?.status ?? "error"} hint="接口服务状态" />
-      <MetricCard icon={Shield} label="数据库健康" value={health.db?.status ?? "error"} hint="数据存储状态" />
-      <MetricCard icon={Shield} label="Redis 健康" value={health.redis?.status ?? "error"} hint="缓存服务状态" />
-      <MetricCard icon={FileText} label="资料总数" value={materials.length} hint="接口巡检" />
-
-      <section className="panel wide">
-        <PanelTitle icon={AlertTriangle} title="资料解析巡检" />
-        <div className="admin-table">
-          {materials.map((material) => (
-            <div key={material.id}>
-              <span>{material.original_filename}</span>
-              <span>{material.file_type}</span>
-              <StatusBadge status={material.parse_status} />
-              <span>{material.parse_error || material.parse_warning || "无异常"}</span>
-            </div>
-          ))}
         </div>
       </section>
     </div>
@@ -2805,8 +3157,19 @@ function pageTitle(view: View) {
     results: "自测结果页",
     wrong: "错题本页",
     plans: "复习计划页",
-    usage: "AI 用量与计费",
-    admin: "管理员端"
+    usage: "AI 用量与计费"
+  };
+  return titles[view];
+}
+
+function adminPageTitle(view: AdminView) {
+  const titles: Record<AdminView, string> = {
+    overview: "管理员后台 / 总览",
+    users: "用户管理",
+    materials: "资料管理",
+    tasks: "解析任务",
+    logs: "操作日志",
+    health: "系统健康"
   };
   return titles[view];
 }

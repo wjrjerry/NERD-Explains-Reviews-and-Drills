@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash, create_access_token, verify_password
@@ -27,13 +28,17 @@ class AuthService:
 
         hashed_password = get_password_hash(payload.password)
 
-        return await UserRepository.create_user(
-            db,
-            username=payload.username,
-            hashed_password=hashed_password,
-            display_name=payload.display_name,
-            role=UserRole.student,
-        )
+        try:
+            return await UserRepository.create_user(
+                db,
+                username=payload.username,
+                hashed_password=hashed_password,
+                display_name=payload.display_name,
+                role=UserRole.student,
+            )
+        except IntegrityError as exc:
+            await db.rollback()
+            raise ValueError("用户名已存在") from exc
     
     @staticmethod
     async def login(db: AsyncSession, payload: UserLoginRequest) -> tuple[User, str]:

@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_point import MasteryStatus
+from app.models.knowledge_point import KnowledgePoint
 from app.models.material import Material
 from app.models.user import User
 from app.repositories.knowledge_graph_repository import (
@@ -137,6 +138,86 @@ def _existing_points_for_ai(points) -> list[dict[str, object]]:
             }
         )
     return payload
+
+
+def _normalize_point_name_for_merge(name: str) -> str:
+    """Use the repository's stable name key for merge validation."""
+    return KnowledgeGraphRepository._normalize_point_name(name)
+
+
+def _validate_graph_merges(
+    raw_merges: object,
+    *,
+    existing_points: list[KnowledgePoint],
+    current_points: list[KnowledgePoint],
+) -> list[dict[str, str]]:
+    """Validate AI-suggested merge mappings against target-local graph nodes."""
+    if not isinstance(raw_merges, list):
+        return []
+
+    existing_names = {
+        _normalize_point_name_for_merge(point.name): point.name
+        for point in existing_points
+    }
+    current_names = {
+        _normalize_point_name_for_merge(point.name): point.name
+        for point in current_points
+    }
+    candidates: list[tuple[str, str]] = []
+
+    for item in raw_merges:
+        if not isinstance(item, dict):
+            continue
+        from_name = str(item.get("from_name", "") or "").strip()
+        to_name = str(item.get("to_name", "") or "").strip()
+        if not from_name or not to_name:
+            continue
+        from_key = _normalize_point_name_for_merge(from_name)
+        to_key = _normalize_point_name_for_merge(to_name)
+        if (
+            not from_key
+            or not to_key
+            or from_key == to_key
+            or from_key not in existing_names
+            or to_key not in current_names
+        ):
+            continue
+        candidates.append((from_key, to_key))
+
+    validated: list[dict[str, str]] = []
+    seen_sources: set[str] = set()
+    seen_targets: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
+    candidate_graph = {from_key: to_key for from_key, to_key in candidates}
+
+    def has_path(start_key: str, target_key: str) -> bool:
+        visited: set[str] = set()
+        current = start_key
+        while current in candidate_graph and current not in visited:
+            if current == target_key:
+                return True
+            visited.add(current)
+            current = candidate_graph[current]
+        return current == target_key
+
+    for from_key, to_key in candidates:
+        if (
+            from_key in seen_sources
+            or from_key in seen_targets
+            or (from_key, to_key) in seen_pairs
+            or has_path(to_key, from_key)
+        ):
+            continue
+        seen_sources.add(from_key)
+        seen_targets.add(to_key)
+        seen_pairs.add((from_key, to_key))
+        validated.append(
+            {
+                "from_name": existing_names[from_key],
+                "to_name": current_names[to_key],
+            }
+        )
+    return validated
 
 
 def _point_match_terms(point: KnowledgePointCreateData) -> list[str]:
@@ -308,12 +389,24 @@ class KnowledgeGraphService:
                 existing_point_names={point.name for point in existing},
             )
             normalized_points = _enrich_material_evidence(normalized_points, materials)
-            await KnowledgeGraphRepository.sync_graph_for_target(
+            synced_points = await KnowledgeGraphRepository.sync_graph_for_target(
                 db,
                 user_id=current_user.id,
                 target_id=payload.target_id,
                 points=normalized_points,
             )
+            merge_mappings = _validate_graph_merges(
+                ai_result.get("merges", []),
+                existing_points=existing,
+                current_points=synced_points,
+            )
+            if merge_mappings:
+                await KnowledgeGraphRepository.merge_points_for_target(
+                    db,
+                    user_id=current_user.id,
+                    target_id=payload.target_id,
+                    merge_mappings=merge_mappings,
+                )
             return await KnowledgeGraphService.get_graph(
                 db,
                 current_user=current_user,

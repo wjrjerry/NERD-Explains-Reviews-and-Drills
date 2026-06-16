@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.core.config import settings
@@ -20,11 +22,20 @@ from app.routers import (
     wrong_questions,
 )
 from app.schemas.response import ApiResponse
+from app.services.bootstrap_service import BootstrapService
 from app.utils.responses import success
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await BootstrapService.ensure_initial_admin()
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
+    lifespan=lifespan,
 )
 
 app.include_router(health.router)

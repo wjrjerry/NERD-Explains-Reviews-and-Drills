@@ -2,6 +2,7 @@ export type Role = "student" | "admin";
 export type TargetType = "course" | "exam";
 export type MaterialType = "pdf" | "txt" | "image";
 export type ParseStatus = "uploaded" | "parsing" | "parsed" | "failed";
+export type ParseTaskStatus = "pending" | "running" | "succeeded" | "failed";
 export type QuestionType = "single_choice" | "multiple_choice" | "true_false" | "subjective";
 export type Difficulty = "easy" | "medium" | "hard";
 export type MasteryStatus = "unmastered" | "reviewing" | "mastered";
@@ -48,6 +49,7 @@ export interface Material {
 export interface MaterialPreview {
   material: Material;
   preview_text: string | null;
+  parsed_text?: string | null;
   message?: string;
 }
 
@@ -292,7 +294,48 @@ export interface ReviewPlan {
 }
 
 export interface HealthStatus {
-  status: string;
+  status?: string;
+  db?: string;
+  redis?: string;
+  result?: number | string | boolean;
+}
+
+export interface AdminSummary {
+  total_users: number;
+  student_users: number;
+  admin_users: number;
+  active_users: number;
+  inactive_users: number;
+  total_materials: number;
+  material_parse_status: Record<ParseStatus, number>;
+  parse_task_status: Record<ParseTaskStatus, number>;
+  failed_tasks: number;
+  recent_logs: number;
+}
+
+export interface AdminParseTask {
+  id: number;
+  material_id: number;
+  user_id: number;
+  task_type: string;
+  task_status: ParseTaskStatus;
+  retry_count: number;
+  failure_reason: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminLog {
+  id: number;
+  admin_user_id: number;
+  operation_type: string;
+  target_type: string;
+  target_id: number | null;
+  operation_result: string;
+  remark: string | null;
+  created_at: string;
 }
 
 export interface KnowledgePointMaterialItem {

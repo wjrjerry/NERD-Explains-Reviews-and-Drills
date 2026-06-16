@@ -97,6 +97,15 @@ class UserRepository:
         await db.refresh(user) # 落盘数据读回内存
 
         return user
+
+    @staticmethod
+    async def update_active_status(db: AsyncSession, user: User, *, is_active: bool) -> User:
+        """启用或禁用用户账号。"""
+        user.is_active = is_active
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        return user
     
     @staticmethod
     async def update_last_login_at(db: AsyncSession, user: User) -> User:

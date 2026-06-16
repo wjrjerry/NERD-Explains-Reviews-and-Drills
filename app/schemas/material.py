@@ -37,9 +37,11 @@ class MaterialDetailResponse(BaseModel):
 class MaterialPreviewResponse(BaseModel):
     """资料预览响应模型。
 
-    第一阶段预览优先返回 TXT 内容；PDF 和图片可先返回文件元数据或提示信息。
+    预览保留原始 preview_text 兼容旧前端，并额外返回解析后的文本，
+    供 TXT、PDF 和图片统一展示解析结果。
     """
 
     material: MaterialResponse
     preview_text: str | None
+    parsed_text: str | None = None
     message: str

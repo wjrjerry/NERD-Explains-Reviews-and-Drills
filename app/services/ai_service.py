@@ -4,6 +4,124 @@ import re
 from app.core.config import settings
 from app.services import llm_service
 
+KNOWLEDGE_INPUT_MAX_CHARS = 12000
+
+ENGLISH_KEYWORD_STOPWORDS = {
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "also",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "doing",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "him",
+    "his",
+    "how",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "itself",
+    "just",
+    "may",
+    "might",
+    "more",
+    "most",
+    "must",
+    "no",
+    "nor",
+    "not",
+    "of",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "our",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "so",
+    "some",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "whether",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+}
+
 
 def _normalize_text(text: str) -> str:
     """Collapse whitespace so mock extraction is stable for different inputs."""
@@ -149,9 +267,11 @@ def generate_knowledge(
 
     text = _normalize_text(parsed_text)
     sentences = _split_sentences(text)
-    keywords = _clean_knowledge_terms(_extract_mock_keywords(text), limit=6)
-    if not keywords:
-        keywords = ["知识点", "复习重点", "核心概念"]
+    keywords = _normalize_keywords(
+        _extract_mock_keywords(text),
+        fallback_text=text,
+        limit=6,
+    )
 
     if not text:
         summary = "当前资料暂无可用于知识提炼的文本内容。"
@@ -198,35 +318,55 @@ def _material_blocks_for_knowledge(
     """Build compact structured material blocks for knowledge extraction."""
     if source_materials:
         blocks: list[dict[str, object]] = []
+        remaining_chars = KNOWLEDGE_INPUT_MAX_CHARS
         for item in source_materials:
             content = _normalize_text(str(item.get("content", "") or ""))
-            if not content:
+            if not content or remaining_chars <= 0:
                 continue
+            clipped = content[:remaining_chars]
+            remaining_chars -= len(clipped)
             blocks.append(
                 {
                     "material_id": item.get("material_id"),
                     "title": str(item.get("title", "") or "").strip(),
-                    "content": content[:5000],
+                    "content": clipped,
                 }
             )
         return blocks
 
     text = _normalize_text(parsed_text)
-    return [{"material_id": None, "title": "", "content": text[:5000]}] if text else []
+    return (
+        [{"material_id": None, "title": "", "content": text[:KNOWLEDGE_INPUT_MAX_CHARS]}]
+        if text
+        else []
+    )
 
 
 def _normalize_knowledge_response(data: dict[str, object]) -> dict[str, str | list[str]]:
     """Validate and clean the model response used by knowledge extraction."""
     summary = _normalize_text(str(data.get("summary", "") or ""))
-    outline = _clean_knowledge_terms(data.get("outline"), limit=8)
-    keywords = _clean_knowledge_terms(data.get("keywords"), limit=8)
-    key_points = _normalize_string_list(data.get("key_points"))[:8]
-    exam_points = _normalize_string_list(data.get("exam_points"))[:8]
+    outline = _limit_string_list(
+        data.get("outline"),
+        fallback=["核心内容梳理", "重要概念与关系", "复习重点与考点"],
+        min_items=3,
+        max_items=8,
+    )
+    keywords = _normalize_keywords(data.get("keywords"), limit=8)
+    key_points = _limit_string_list(
+        data.get("key_points"),
+        fallback=[],
+        min_items=0,
+        max_items=8,
+    )
+    exam_points = _limit_string_list(
+        data.get("exam_points"),
+        fallback=[],
+        min_items=0,
+        max_items=8,
+    )
 
     if not summary:
         raise llm_service.LlmServiceError("LLM knowledge extraction summary is empty.")
-    if not outline:
-        outline = ["核心内容梳理", "重要概念与关系", "复习重点与考点"]
     if not keywords:
         keywords = ["核心概念", "复习重点", "考点分析"]
     if not key_points:
@@ -447,6 +587,90 @@ def _normalize_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _is_meaningful_keyword(keyword: str) -> bool:
+    """Reject filler words that are not useful learning keywords."""
+    candidate = keyword.strip(" \t\r\n,.;:!?，。；：！？、()（）[]【】{}“”\"'")
+    if not candidate or _is_noise_keyword(candidate):
+        return False
+
+    has_chinese = bool(re.search(r"[\u4e00-\u9fff]", candidate))
+    if has_chinese:
+        return len(candidate) >= 2
+
+    if candidate.isascii():
+        lowered = candidate.lower()
+        tokens = re.findall(r"[a-z0-9]+", lowered)
+        if not tokens:
+            return False
+        if len(tokens) == 1 and (
+            len(tokens[0]) < 3 or tokens[0] in ENGLISH_KEYWORD_STOPWORDS
+        ):
+            return False
+        return any(
+            len(token) >= 3
+            and token not in ENGLISH_KEYWORD_STOPWORDS
+            and not token.isdigit()
+            for token in tokens
+        )
+
+    return len(candidate) >= 2
+
+
+def _dedupe_and_filter_keywords(items: list[str], *, limit: int) -> list[str]:
+    """Keep stable keyword order while removing duplicates and filler words."""
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        keyword = item.strip(" \t\r\n,.;:!?，。；：！？、()（）[]【】{}“”\"'")
+        if not _is_meaningful_keyword(keyword):
+            continue
+
+        dedupe_key = keyword.lower() if keyword.isascii() else keyword
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        keywords.append(keyword)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _normalize_keywords(
+    value: object,
+    *,
+    fallback_text: str | None = None,
+    limit: int = 10,
+) -> list[str]:
+    """Normalize knowledge keywords and fall back to deterministic extraction."""
+    keywords = _dedupe_and_filter_keywords(_normalize_string_list(value), limit=limit)
+    if keywords or not fallback_text:
+        return keywords
+
+    fallback = _dedupe_and_filter_keywords(
+        _extract_mock_keywords(fallback_text),
+        limit=limit,
+    )
+    return fallback or ["知识点", "复习重点", "核心概念"][:limit]
+
+
+def _limit_string_list(
+    value: object,
+    *,
+    fallback: list[str],
+    min_items: int,
+    max_items: int,
+) -> list[str]:
+    """Normalize a list field and top it up with fallback items when needed."""
+    items = _normalize_string_list(value)
+    for item in fallback:
+        if len(items) >= min_items:
+            break
+        if item not in items:
+            items.append(item)
+    return items[:max_items]
 
 
 def _fallback_question_hints(
@@ -1130,6 +1354,7 @@ def _normalize_graph_item(raw: object, *, index: int) -> dict[str, object]:
 
     return {
         "name": name,
+        "existing_name": str(raw.get("existing_name", "") or "").strip() or None,
         "description": str(raw.get("description", "") or "").strip(),
         "importance_weight": min(max(importance_weight, 0.0), 1.0),
         "parent_name": str(raw.get("parent_name", "") or "").strip() or None,
@@ -1137,6 +1362,28 @@ def _normalize_graph_item(raw: object, *, index: int) -> dict[str, object]:
         "sort_order": sort_order,
         "evidence": normalized_evidence,
     }
+
+
+def _normalize_graph_merges(raw_merges: object) -> list[dict[str, str]]:
+    """Normalize AI-suggested graph merge mappings."""
+    if not isinstance(raw_merges, list):
+        return []
+
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw_merges:
+        if not isinstance(item, dict):
+            continue
+        from_name = str(item.get("from_name", "") or "").strip()
+        to_name = str(item.get("to_name", "") or "").strip()
+        if not from_name or not to_name or from_name == to_name:
+            continue
+        key = (from_name, to_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({"from_name": from_name, "to_name": to_name})
+    return normalized
 
 
 def generate_knowledge_graph(
@@ -1218,7 +1465,7 @@ def generate_knowledge_graph(
             }
         )
 
-    return {"points": points}
+    return {"points": points, "merges": []}
 
 
 def _generate_knowledge_graph_with_real_ai(
@@ -1259,10 +1506,12 @@ def _generate_knowledge_graph_with_real_ai(
         "不需要机械重复所有没有变化的旧知识点。"
         "如果返回项对应已有知识点，必须增加 existing_name 字段并填写已有图谱中的原始 name；"
         "真正新增的知识点 existing_name 必须为 null。"
+        "如果你判断一个旧知识点应被重命名并合并到新名称，请把新名称作为新增/保留点返回，"
+        "并在 merges 中声明旧名称到新名称的映射，不要在该新名称 points 项里填写旧 existing_name。"
         "对每个返回知识点都要重新检查资料列表中的每一份资料，"
         "evidence 应列出所有实际相关的资料，而不只是最近上传的资料。"
         "返回的 points 应包含需要新增或更新的知识点，最多 "
-        f"{max_points} 个节点。返回 JSON 对象，字段为 points。"
+        f"{max_points} 个节点。返回 JSON 对象，字段为 points 和 merges。"
         "points 是数组，每个元素包含：\n"
         "- name: 知识点名称。\n"
         "- existing_name: 对应已有知识点的原始名称；新增知识点为 null。\n"
@@ -1273,6 +1522,10 @@ def _generate_knowledge_graph_with_real_ai(
         "- sort_order: 排序，从 1 开始。\n"
         "- evidence: 数组，每个元素包含 material_id, snippet, relevance_score。\n"
         "evidence 的 material_id 必须来自资料列表，snippet 必须来自资料内容。"
+        "merges 是数组，用于声明语义确认相同、需要合并的旧知识点到新知识点映射；"
+        "每个元素包含 from_name 和 to_name。from_name 必须来自已有知识图谱，"
+        "to_name 必须是本次刷新后应保留的知识点名称。只有在确认二者是同一知识点、"
+        "只是命名粒度或措辞变化时才输出；不要把上下位概念、相关但不同的概念合并。"
     )
     content = llm_service.chat_completion(
         system_prompt=system_prompt,
@@ -1290,7 +1543,8 @@ def _generate_knowledge_graph_with_real_ai(
         "points": [
             _normalize_graph_item(item, index=index)
             for index, item in enumerate(raw_points[:max_points])
-        ]
+        ],
+        "merges": _normalize_graph_merges(data.get("merges", [])),
     }
 
 

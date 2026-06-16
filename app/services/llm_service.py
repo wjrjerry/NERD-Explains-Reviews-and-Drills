@@ -144,6 +144,22 @@ def _chat_completions_url(base_url: str) -> str:
     return f"{normalized}/chat/completions"
 
 
+def _build_request_headers(api_key: str, base_url: str) -> dict[str, str]:
+    """Build provider request headers for OpenAI-compatible APIs."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if "openrouter.ai" in base_url:
+        headers.update(
+            {
+                "HTTP-Referer": "http://localhost:8000",
+                "X-Title": "NERD AI Study Backend",
+            }
+        )
+    return headers
+
+
 def _require_real_ai_settings() -> tuple[str, str, str]:
     """Return required real AI settings or raise a clear configuration error."""
     if not settings.ai_api_key:
@@ -191,10 +207,7 @@ def chat_completion(
     req = request.Request(
         url,
         data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=_build_request_headers(api_key, base_url),
         method="POST",
     )
 

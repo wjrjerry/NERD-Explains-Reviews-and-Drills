@@ -104,9 +104,9 @@ cp .env.example .env
 ```text
 AI_PROVIDER=openai-compatible
 AI_API_KEY=你的 API Key
-AI_BASE_URL=https://api.deepseek.com
-AI_MODEL=deepseek-v4-flash
-AI_TIMEOUT_SECONDS=30
+AI_BASE_URL=https://openrouter.ai/api/v1
+AI_MODEL=qwen/qwen3-30b-a3b-instruct-2507
+AI_TIMEOUT_SECONDS=60
 ```
 
 ## 启动后端
@@ -486,18 +486,18 @@ npm run build
 
 ## 管理员账号
 
-注册接口默认创建学生账号。需要测试管理员接口时，可以先注册账号，再手动改角色：
+注册接口默认创建学生账号。需要第一个管理员时，在 `.env` 中配置初始管理员变量后启动后端：
 
-```bash
-curl -X POST http://localhost:8000/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin1", "password": "123456", "display_name": "管理员1"}'
-
-docker compose exec postgres psql -U ai_study -d ai_study_db \
-  -c "UPDATE users SET role = 'admin' WHERE username = 'admin1';"
+```env
+INITIAL_ADMIN_USERNAME=admin1
+INITIAL_ADMIN_PASSWORD=请使用强密码
+INITIAL_ADMIN_DISPLAY_NAME=管理员1
 ```
 
-管理员登录后可访问 `/admin/*` 接口。
+后端启动时如果上述用户名和密码均已配置，并且该用户名尚不存在，就会自动创建
+`role = admin` 的账号；如果该用户名已存在，则不会重复创建，也不会覆盖密码。管理员登录后
+可访问 `/admin/*`、`/health/db` 和 `/health/redis` 等管理员接口。
+首次部署如果先启动服务再执行数据库迁移，迁移完成后重启 API 容器即可触发初始管理员创建。
 
 ## 停止服务
 
