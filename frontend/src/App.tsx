@@ -1780,7 +1780,7 @@ function TargetsPage({
           <option value="exam">exam</option>
           <option value="course">course</option>
         </select>
-        <input name="exam_date" placeholder="考试日期，如 2026年06月16日" />
+        <input name="exam_date" type="date" aria-label="考试日期" />
         <textarea name="review_goal" placeholder="复习目标" required />
         <textarea name="description" placeholder="补充说明（可选）" />
         <button className="primary-button" type="submit"><Plus size={16} />创建目标</button>
