@@ -4374,8 +4374,8 @@ function ReviewPlansPage({
         <select name="target_id" defaultValue={targets[0]?.id}>
           {targets.map((target) => <option key={target.id} value={target.id}>{target.title}</option>)}
         </select>
-        <DatePickerField name="start_date" label="开始日期" required />
-        <DatePickerField name="end_date" label="结束日期" required />
+        <DatePickerField name="start_date" label="开始日期" placeholder="选择开始日期" required />
+        <DatePickerField name="end_date" label="结束日期" placeholder="选择结束日期" required />
         <button className="primary-button" type="submit" disabled={isGenerating}>
           {isGenerating ? <LoaderCircle className="spin-icon" size={16} /> : <CalendarDays size={16} />}
           {isGenerating ? "规划中" : "生成计划"}
