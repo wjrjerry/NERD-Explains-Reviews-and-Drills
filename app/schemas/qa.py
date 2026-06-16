@@ -13,6 +13,10 @@ class QaAskRequest(BaseModel):
         default=None,
         description="Optional knowledge point ID for focused QA.",
     )
+    knowledge_point_ids: list[int] = Field(
+        default_factory=list,
+        description="Optional knowledge point IDs for focused QA.",
+    )
     question: str = Field(min_length=1, description="Question asked by the student.")
 
     @model_validator(mode="after")

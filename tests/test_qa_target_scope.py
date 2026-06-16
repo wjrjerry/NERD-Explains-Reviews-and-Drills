@@ -18,6 +18,17 @@ def test_qa_ask_request_accepts_target_and_knowledge_point_scope():
     assert payload.knowledge_point_id == 3
 
 
+def test_qa_ask_request_accepts_multiple_knowledge_points():
+    payload = QaAskRequest(
+        target_id=1,
+        knowledge_point_ids=[3, 5, 8],
+        question="这几个知识点之间有什么关系？",
+    )
+
+    assert payload.target_id == 1
+    assert payload.knowledge_point_ids == [3, 5, 8]
+
+
 def test_qa_ask_request_requires_material_or_target_scope():
     with pytest.raises(ValidationError):
         QaAskRequest(question="这段资料的重点是什么？")

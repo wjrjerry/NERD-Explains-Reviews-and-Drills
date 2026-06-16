@@ -51,6 +51,7 @@ type QaScope = {
   materialId?: number;
   targetId?: number;
   knowledgePointId?: number;
+  knowledgePointIds?: number[];
   question: string;
 };
 
@@ -328,6 +329,7 @@ export const api = {
         material_id: scope.materialId,
         target_id: scope.targetId,
         knowledge_point_id: scope.knowledgePointId,
+        knowledge_point_ids: scope.knowledgePointIds ?? [],
         question: scope.question
       })
     }),
