@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
 import {
   AlertTriangle,
   BookOpen,
@@ -1052,9 +1055,9 @@ function App() {
     }
   }
 
-  async function handleUpdateTarget(targetId: number, reviewGoal: string) {
+  async function handleUpdateTarget(targetId: number, payload: Partial<StudyTarget>) {
     try {
-      const data = await api.updateTarget(targetId, { review_goal: reviewGoal });
+      const data = await api.updateTarget(targetId, payload);
       setTargets((current) => current.map((item) => (item.id === targetId ? data.target : item)));
       setNotice({ tone: "success", text: "目标已更新。" });
     } catch (error) {
@@ -2274,23 +2277,29 @@ function AuthPage({
 }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [loginRole, setLoginRole] = useState<LoginRole>("student");
+  const isLogin = mode === "login";
 
   return (
     <div className="auth-screen">
+      <div className="auth-tech-lines" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <div className="auth-background-panels" aria-hidden="true">
         <section className="auth-bg-panel auth-bg-panel-queue">
           <div>
-            <strong>资料解析</strong>
-            <span>自动入库中</span>
+            <strong>AI 解析队列</strong>
+            <span>Secure Sync</span>
           </div>
-          <p>PDF 合同案例.pdf</p>
-          <p>课堂笔记.txt</p>
-          <p>图片讲义 OCR</p>
+          <p>Chapter13.pdf · OCR</p>
+          <p>编译原理笔记 · Chunking</p>
+          <p>图片讲义 · Vision Parse</p>
         </section>
         <section className="auth-bg-panel auth-bg-panel-mastery">
           <div>
-            <strong>掌握概览</strong>
-            <span>知识点追踪</span>
+            <strong>知识图谱</strong>
+            <span>42 nodes</span>
           </div>
           <div className="auth-bg-progress"><i style={{ width: "72%" }} /></div>
           <div className="auth-bg-progress"><i style={{ width: "48%" }} /></div>
@@ -2317,40 +2326,51 @@ function AuthPage({
               <span>上传资料后自动解析与提炼知识点，围绕目标完成问答、出题、自测、错题复习和计划追踪。</span>
             </div>
           </div>
-          <div className="hero-phone">
+          <div className="hero-phone auth-workflow-stage">
             <div className="phone-island" />
-            <div className="mini-card blue">
+            <div className="workflow-rail" aria-hidden="true" />
+            <div className="mini-card blue workflow-card">
+              <span className="workflow-step"><Upload size={15} />上传资料</span>
               <strong>资料自动入库</strong>
               <span>支持 TXT、PDF 和图片资料，上传后自动解析并进入学习流程。</span>
             </div>
-            <div className="mini-card green">
+            <div className="mini-card green workflow-card">
+              <span className="workflow-step"><Bot size={15} />AI 解析</span>
               <strong>知识驱动学习</strong>
               <span>基于资料生成知识提炼、知识图谱、AI 问答和针对性出题。</span>
             </div>
-            <div className="mini-card">
+            <div className="mini-card workflow-card">
+              <span className="workflow-step"><ClipboardCheck size={15} />错题复习计划</span>
               <strong>复习闭环追踪</strong>
               <span>自测后沉淀错题，按掌握状态复习，并生成可勾选的复习计划。</span>
             </div>
             <div className="auth-flow-line" aria-label="学习流程">
               <span>上传资料</span>
+              <span>AI 解析</span>
               <span>知识图谱</span>
-              <span>问答出题</span>
+              <span>自动出题</span>
               <span>错题复习</span>
               <span>计划完成</span>
             </div>
+            <div className="floating-data-card card-parse"><FileText size={16} /><span>PDF 解析完成</span><strong>98%</strong></div>
+            <div className="floating-data-card card-graph"><Network size={16} /><span>知识点识别</span><strong>42 个</strong></div>
+            <div className="floating-data-card card-quiz"><ClipboardCheck size={16} /><span>已生成练习题</span><strong>15 道</strong></div>
+            <div className="floating-data-card card-plan"><CalendarDays size={16} /><span>今日复习计划</span><strong>3 项</strong></div>
           </div>
         </section>
 
-        <form className="auth-panel" onSubmit={(event) => submitForm(event, mode === "login" ? onLogin : onRegister)}>
-          <div>
-            <p className="eyebrow">{mode === "login" ? "欢迎回来" : "创建学习账号"}</p>
-            <h1>{mode === "login" ? (loginRole === "admin" ? "管理员登录" : "学生登录") : "学生注册"}</h1>
+        <form className="auth-panel" onSubmit={(event) => submitForm(event, isLogin ? onLogin : onRegister)}>
+          <div className="auth-status-strip"><Shield size={14} />AI Study Cloud · Secure Sync</div>
+          <div className="auth-heading">
+            <p className="eyebrow">Welcome back</p>
+            <h1>{isLogin ? (loginRole === "admin" ? "管理员登录" : "学生登录") : "学生注册"}</h1>
+            <span>{isLogin ? "登录后同步课程目标、资料库、错题本与复习计划" : "创建账号后即可同步资料解析、知识图谱与复习闭环"}</span>
           </div>
 
           {notice ? <NoticeBar notice={notice} onClose={onCloseNotice} /> : null}
           {loading ? <LoadingBanner /> : null}
 
-          {mode === "login" ? (
+          {isLogin ? (
             <div className="auth-role-switch" role="tablist" aria-label="登录身份">
               <button
                 type="button"
@@ -2368,14 +2388,25 @@ function AuthPage({
               </button>
             </div>
           ) : null}
-          {mode === "login" ? <input type="hidden" name="login_role" value={loginRole} /> : null}
-          <input name="username" placeholder="用户名" minLength={3} required />
-          <input name="password" type="password" placeholder="密码" minLength={6} required />
-          {mode === "register" ? <input name="display_name" placeholder="昵称（可选）" /> : null}
+          {isLogin ? <input type="hidden" name="login_role" value={loginRole} /> : null}
+          <label className="auth-input-field">
+            <UserCircle size={18} />
+            <input name="username" placeholder="用户名" minLength={3} required />
+          </label>
+          <label className="auth-input-field">
+            <Shield size={18} />
+            <input name="password" type="password" placeholder="密码" minLength={6} required />
+          </label>
+          {mode === "register" ? (
+            <label className="auth-input-field">
+              <Sparkles size={18} />
+              <input name="display_name" placeholder="昵称（可选）" />
+            </label>
+          ) : null}
 
-          <button className="primary-button" type="submit" disabled={loading}>
-            <UserCircle size={16} />
-            {mode === "login" ? "登录并同步数据" : "注册并登录"}
+          <button className="primary-button auth-submit-button" type="submit" disabled={loading}>
+            {loading ? <LoaderCircle className="spin" size={16} /> : <UserCircle size={16} />}
+            {isLogin ? (loading ? "正在同步数据..." : "登录并同步数据") : loading ? "正在创建账号..." : "注册并登录"}
           </button>
           <button
             className="ghost-button"
@@ -2385,7 +2416,7 @@ function AuthPage({
               setLoginRole("student");
             }}
           >
-            {mode === "login" ? "没有账号？创建新账号" : "已有账号？返回登录"}
+            {isLogin ? "没有账号？创建新账号" : "已有账号？返回登录"}
           </button>
         </form>
       </div>
@@ -2669,57 +2700,104 @@ function TargetsPage({
   selectedTargetId: number | null;
   onSelect: (id: number) => void;
   onCreate: (formData: FormData) => void;
-  onUpdate: (id: number, reviewGoal: string) => void;
+  onUpdate: (id: number, payload: Partial<StudyTarget>) => void;
   onDelete: (id: number) => void;
 }) {
   const selected = targets.find((item) => item.id === selectedTargetId) ?? targets[0] ?? null;
+  const [editingTargetId, setEditingTargetId] = useState<number | null>(null);
+  const [createFormVersion, setCreateFormVersion] = useState(0);
+  const editingTarget = targets.find((item) => item.id === editingTargetId) ?? null;
+  const isEditing = Boolean(editingTarget);
+
+  useEffect(() => {
+    if (editingTargetId && !targets.some((item) => item.id === editingTargetId)) {
+      setEditingTargetId(null);
+    }
+  }, [editingTargetId, targets]);
+
+  function handleTargetFormSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    if (editingTarget) {
+      onUpdate(editingTarget.id, {
+        title: String(formData.get("title") ?? "").trim(),
+        subject: emptyToUndefined(formData.get("subject")),
+        target_type: String(formData.get("target_type") ?? "exam") as StudyTarget["target_type"],
+        exam_date: normalizeDateInput(formData.get("exam_date")),
+        review_goal: emptyToUndefined(formData.get("review_goal")),
+        description: emptyToUndefined(formData.get("description"))
+      });
+      return;
+    }
+    onCreate(formData);
+    form.reset();
+    setCreateFormVersion((value) => value + 1);
+  }
+
+  function handleSelectForEdit(target: StudyTarget) {
+    onSelect(target.id);
+    setEditingTargetId(target.id);
+  }
 
   return (
-    <div className="two-column">
-      <form className="panel form-panel" onSubmit={(event) => submitForm(event, onCreate)}>
-        <PanelTitle icon={Plus} title="创建目标" />
-        <input name="title" placeholder="目标标题" required />
-        <input name="subject" placeholder="学科名称" required />
-        <select name="target_type" defaultValue="exam">
+    <div className="two-column targets-layout">
+      <form
+        key={editingTarget ? `edit-target-${editingTarget.id}-${editingTarget.updated_at}` : `create-target-${createFormVersion}`}
+        className="panel form-panel target-editor-panel"
+        onSubmit={handleTargetFormSubmit}
+      >
+        <PanelTitle icon={isEditing ? BookOpen : Plus} title={isEditing ? "编辑目标" : "创建目标"} />
+        <input name="title" placeholder="目标标题" defaultValue={editingTarget?.title ?? ""} required />
+        <input name="subject" placeholder="学科名称" defaultValue={editingTarget?.subject ?? ""} required />
+        <select name="target_type" defaultValue={editingTarget?.target_type ?? "exam"}>
           <option value="exam">exam</option>
           <option value="course">course</option>
         </select>
-        <DatePickerField name="exam_date" label="考试日期" placeholder="选择考试日期" />
-        <textarea name="review_goal" placeholder="复习目标" required />
-        <textarea name="description" placeholder="补充说明（可选）" />
-        <button className="primary-button" type="submit"><Plus size={16} />创建目标</button>
+        <DatePickerField
+          name="exam_date"
+          label="考试日期"
+          placeholder="选择考试日期"
+          initialValue={editingTarget?.exam_date ?? ""}
+        />
+        <textarea name="review_goal" placeholder="复习目标" defaultValue={editingTarget?.review_goal ?? ""} required />
+        <textarea name="description" placeholder="补充说明（可选）" defaultValue={editingTarget?.description ?? ""} />
+        <button className="primary-button" type="submit">
+          {isEditing ? <CheckCircle2 size={16} /> : <Plus size={16} />}
+          {isEditing ? "保存修改" : "创建目标"}
+        </button>
+        {isEditing ? (
+          <button className="ghost-button" type="button" onClick={() => setEditingTargetId(null)}>
+            取消编辑 / 新建目标
+          </button>
+        ) : null}
       </form>
 
       <section className="panel">
         <PanelTitle icon={BookOpen} title="目标列表" />
         <div className="list">
           {targets.map((target) => (
-            <button key={target.id} className={`material-row ${target.id === selected?.id ? "selected" : ""}`} onClick={() => onSelect(target.id)}>
-              <div>
-                <strong>{target.title}</strong>
-                <span>{target.subject ?? "未设置科目"} · {target.target_type} · {formatDateZh(target.exam_date, "无考试日期")}</span>
-              </div>
-            </button>
+            <div key={target.id} className={`target-list-item ${target.id === selected?.id ? "selected" : ""}`}>
+              <button className="material-row" onClick={() => handleSelectForEdit(target)}>
+                <div>
+                  <strong>{target.title}</strong>
+                  <span>{target.subject ?? "未设置科目"} · {target.target_type} · {formatDateZh(target.exam_date, "无考试日期")}</span>
+                </div>
+              </button>
+              <button
+                className="target-delete-button"
+                title="删除目标"
+                aria-label={`删除目标：${target.title}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete(target.id);
+                }}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           ))}
         </div>
-
-        {selected ? (
-          <div className="detail-stack">
-            <label className="field-block">
-              <span>当前复习目标</span>
-              <textarea
-                defaultValue={selected.review_goal ?? ""}
-                onBlur={(event) => {
-                  const nextValue = event.currentTarget.value.trim();
-                  if (nextValue && nextValue !== selected.review_goal) {
-                    onUpdate(selected.id, nextValue);
-                  }
-                }}
-              />
-            </label>
-            <button className="danger-button" onClick={() => onDelete(selected.id)}><Trash2 size={16} />删除当前目标</button>
-          </div>
-        ) : null}
       </section>
     </div>
   );
@@ -2930,7 +3008,7 @@ function MaterialDetailPage({
         {knowledge ? (
           <section className="panel knowledge-result-panel">
             <PanelTitle icon={Bot} title="知识提炼结果" />
-            <div className="detail-stack">
+            <div className="detail-stack knowledge-result-scroll">
               {knowledge.scope ? <span className="subtle-pill">{knowledge.scope === "target" ? "目标级知识提炼" : "资料级知识提炼"}</span> : null}
               <p>{knowledge.summary}</p>
               <InfoList title="提纲" items={knowledge.outline} />
@@ -3334,13 +3412,14 @@ function KnowledgeGraphPage({
           <div className="graph-canvas">
             {graphLevels.map((level) => {
               const displayLevel = getGraphDisplayLevel(level, graphMinLevel);
+              const isCoreLevel = displayLevel === 1;
               const levelNodes = graphNodes
                 .filter((node) => node.level === level)
                 .sort((left, right) => left.sort_order - right.sort_order);
               return (
-                <section className="graph-level" key={level}>
+                <section className={`graph-level ${isCoreLevel ? "core-level" : ""}`} key={level}>
                   <div className="graph-level-heading">
-                    <strong>{displayLevel === 1 ? "核心知识" : `第 ${displayLevel} 层知识`}</strong>
+                    <strong>{isCoreLevel ? "核心知识" : `第 ${displayLevel} 层知识`}</strong>
                     <span>{levelNodes.length} 个知识点</span>
                   </div>
                   <div className="graph-level-nodes">
@@ -3348,7 +3427,8 @@ function KnowledgeGraphPage({
                       const parent = node.parent_id
                         ? graphNodes.find((item) => item.id === node.parent_id)
                         : null;
-                      const size = Math.round(88 + Math.min(Math.max(node.importance_weight, 0), 1) * 52);
+                      const baseSize = 88 + Math.min(Math.max(node.importance_weight, 0), 1) * 52;
+                      const size = Math.round(baseSize + (isCoreLevel ? 24 : 0));
                       return (
                         <button
                           key={node.id}
@@ -3383,7 +3463,6 @@ function KnowledgeGraphPage({
             <h3>{activeNode.name}</h3>
             <p>{activeNode.description ?? "暂无描述。"}</p>
             <div className="mini-metrics">
-              <span>掌握度 {Math.round(activeNode.mastery_score * 100)}%</span>
               <span>正确率 {Math.round(activeNode.accuracy * 100)}%</span>
               <span>错题 {activeNode.wrong_count}</span>
               <span>作答 {activeNode.answered_count}</span>
@@ -3553,7 +3632,7 @@ function QaPage({
                 <article className="chat-card" key={record.qa_record_id}>
                   <strong>{record.question}</strong>
                   <div className="chat-answer-markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{record.answer}</ReactMarkdown>
+                    <MarkdownAnswer>{record.answer}</MarkdownAnswer>
                   </div>
                   {record.knowledge_points?.length ? (
                     <div className="tag-cloud">
@@ -4095,7 +4174,7 @@ function QuestionExplainBox({
           </button>
           {answer ? (
             <div className="chat-answer-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+              <MarkdownAnswer>{answer}</MarkdownAnswer>
             </div>
           ) : null}
         </div>
@@ -4565,6 +4644,17 @@ function NoticeBar({ notice, onClose }: { notice: Notice; onClose: () => void })
   );
 }
 
+function MarkdownAnswer({ children }: { children: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+}
+
 function LoadingBanner() {
   return (
     <div className="toast">
@@ -4578,15 +4668,21 @@ function DatePickerField({
   name,
   label,
   required = false,
-  placeholder = "选择日期"
+  placeholder = "选择日期",
+  initialValue = ""
 }: {
   name: string;
   label: string;
   required?: boolean;
   placeholder?: string;
+  initialValue?: string;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
 
   function openPicker() {
     const input = inputRef.current;
