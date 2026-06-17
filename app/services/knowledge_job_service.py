@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 import app.db.session as db_session
 from app.models.knowledge_job import KnowledgeJob, KnowledgeJobStatus, KnowledgeJobType
@@ -51,16 +52,32 @@ class KnowledgeJobService:
                 return await KnowledgeJobRepository.request_rerun(db, existing)
             job = await KnowledgeJobRepository.reset_for_rerun(db, existing)
         else:
-            job = await KnowledgeJobRepository.create(
-                db,
-                user_id=current_user.id,
-                job_type=job_type,
-                target_id=target_id,
-                material_id=material_id,
-                force_regenerate=force_regenerate,
-                max_points=max_points,
-                dedupe_key=dedupe_key,
-            )
+            try:
+                job = await KnowledgeJobRepository.create(
+                    db,
+                    user_id=current_user.id,
+                    job_type=job_type,
+                    target_id=target_id,
+                    material_id=material_id,
+                    force_regenerate=force_regenerate,
+                    max_points=max_points,
+                    dedupe_key=dedupe_key,
+                )
+            except IntegrityError:
+                await db.rollback()
+                job = await KnowledgeJobRepository.get_by_dedupe_key(db, dedupe_key)
+                if job is None:
+                    raise
+                job.force_regenerate = force_regenerate
+                job.max_points = max_points
+                if job.status == KnowledgeJobStatus.pending:
+                    db.add(job)
+                    await db.commit()
+                    await db.refresh(job)
+                    return job
+                if job.status == KnowledgeJobStatus.running:
+                    return await KnowledgeJobRepository.request_rerun(db, job)
+                job = await KnowledgeJobRepository.reset_for_rerun(db, job)
 
         celery_task_id = TaskQueueService.enqueue_knowledge_job(job.id, queue=_job_queue(job_type))
         return await KnowledgeJobRepository.set_celery_task_id(

@@ -3,6 +3,7 @@ import os
 from typing import AsyncGenerator
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Set required environment variables BEFORE any app imports to avoid Pydantic validation errors
@@ -53,9 +54,21 @@ async def test_engine(tmp_path_factory) -> AsyncGenerator:
     import app.models.knowledge_point
     import app.models.ai_call_log
 
-    engine = create_async_engine(db_url, echo=False, future=True)
+    connect_args = {}
+    if db_url.startswith("sqlite+aiosqlite"):
+        connect_args = {"timeout": 30}
+
+    engine = create_async_engine(
+        db_url,
+        echo=False,
+        future=True,
+        connect_args=connect_args,
+    )
 
     async with engine.begin() as conn:
+        if db_url.startswith("sqlite+aiosqlite"):
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA busy_timeout=30000"))
         await conn.run_sync(Base.metadata.create_all)
 
     try:

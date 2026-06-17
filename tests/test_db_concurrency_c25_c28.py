@@ -127,7 +127,7 @@ async def test_db_c25_concurrent_ai_usage_logging_records_calls(client, async_se
         )
 
     async def ai_call(index: int):
-        action = actions[index]
+        action = actions[index % len(actions)]
         if action == "qa":
             return await client.post(
                 "/qa/ask",
