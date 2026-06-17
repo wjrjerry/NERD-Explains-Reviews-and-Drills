@@ -1,0 +1,12 @@
+flowchart LR
+  Frontend["前端 (Web/App)"] -->|REST / WebSocket| API["FastAPI 后端"]
+  API --> Postgres[(PostgreSQL 数据库)]
+  API --> Redis[(Redis 缓存/任务状态)]
+  API --> FileStore[(文件存储，Local / Cloud)]
+  API --> OCR["OCR 服务 (外部或内部)"]
+  API --> AI["AI 模型服务 (外部 API 或内部代理)"]
+  OCR --> API
+  AI --> API
+
+  Note["异步任务（解析/AI 调用）由 Redis / 后台 Worker 管理"]
+  API -.-> Note

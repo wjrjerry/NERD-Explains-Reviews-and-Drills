@@ -1,18 +1,20 @@
 flowchart TD
-  subgraph UploadFlow[资料上传与解析流程]
-    U1[前端上传文件] --> U2[POST /materials]
-    U2 --> U3[MaterialService.save -> materials(parse_status=uploaded)]
-    U3 --> U4[触发 ParserService 或 POST /materials/{id}/parse]
-    U4 --> U5[创建 ai_tasks (parse)]
-    U5 --> U6[Worker 执行解析：TXT->parsed_text / PDF|图片->OCR]
-    U6 --> U7[更新 materials.parse_status = parsed|failed]
+  subgraph UploadFlow["资料上传与解析流程"]
+    U1["前端上传文件"] --> U2["POST /materials"]
+    U2 --> U3["保存 materials，parse_status=uploaded"]
+    U3 --> U4["创建 parse_tasks"]
+    U4 --> U5["worker 执行 TXT/PDF/OCR/视觉解析"]
+    U5 --> U6["写入 parsed_text 和结构化内容"]
+    U6 --> U7["parse_status=parsed 或 failed"]
   end
 
-  subgraph AIFlow[AI 闭环]
-    A1[用户触发问答/出题] --> A2[检查 materials.parse_status==parsed]
-    A2 --> A3[调用 AiService -> external model]
-    A3 --> A4[记录 ai_call_logs]
-    A4 --> A5[保存 qa_records/questions/test_records]
-    A5 --> A6[若答错则写入 wrong_questions]
-    A6 --> A7[ReviewPlanService 生成/更新复习计划]
+  subgraph AIFlow["AI 学习闭环"]
+    A1["知识提炼/图谱刷新"] --> A2["QA 问答"]
+    A2 --> A3["AI 出题"]
+    A3 --> A4["自测提交与评分"]
+    A4 --> A5["错题沉淀"]
+    A5 --> A6["知识点掌握度更新"]
+    A6 --> A7["复习计划生成"]
   end
+
+  U7 --> A1
