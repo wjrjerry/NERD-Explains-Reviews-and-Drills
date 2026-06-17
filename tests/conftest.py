@@ -6,7 +6,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Set required environment variables BEFORE any app imports to avoid Pydantic validation errors
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault(
+    "DATABASE_URL",
+    os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"),
+)
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-do-not-use-in-production")
 os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
@@ -22,9 +25,13 @@ def event_loop():
 @pytest.fixture(scope="session")
 async def test_engine(tmp_path_factory) -> AsyncGenerator:
     """Create a temporary sqlite+aiosqlite engine for tests and create tables."""
-    db_dir = tmp_path_factory.mktemp("data")
-    db_file = db_dir / "test.db"
-    db_url = f"sqlite+aiosqlite:///{db_file}"
+    configured_db_url = os.getenv("TEST_DATABASE_URL")
+    if configured_db_url:
+        db_url = configured_db_url
+    else:
+        db_dir = tmp_path_factory.mktemp("data")
+        db_file = db_dir / "test.db"
+        db_url = f"sqlite+aiosqlite:///{db_file}"
 
     # Import Base and models so metadata is populated
     from app.db.base import Base
