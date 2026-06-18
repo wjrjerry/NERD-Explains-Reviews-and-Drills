@@ -131,6 +131,9 @@ __pypackages__/
 celerybeat-schedule
 celerybeat.pid
 
+# Local Caddy CA export
+caddy-local-root.crt
+
 # Redis
 *.rdb
 *.aof

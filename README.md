@@ -130,11 +130,21 @@ HTTPS 访问入口：
 https://localhost
 ```
 
-Caddy 使用本地内置 CA 签发证书，首次访问时浏览器可能提示证书不受信任。可以先临时继续访问，也可以导出本地 CA 根证书后导入系统或浏览器信任列表：
+Caddy 使用本地内置 CA 签发证书，首次访问时浏览器可能提示证书不受信任。可以先临时继续访问；如果希望 Windows 浏览器信任本地证书，可在 WSL 中执行：
+
+```bash
+powershell.exe -ExecutionPolicy Bypass -File scripts/trust-caddy-local-ca.ps1
+```
+
+脚本会从正在运行的 Caddy 容器导出本地根证书，并导入到 Windows 当前用户的受信任根证书库。执行后请重启浏览器，再访问 `https://localhost`。
+
+也可以只导出证书后手动导入系统或浏览器信任列表：
 
 ```bash
 docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-local-root.crt
 ```
+
+每台机器都会生成自己的 Caddy 本地 CA，因此其他用户在自己的电脑运行项目时也需要各自导入一次。如果删除并重建 `caddy_data` volume，证书会变化，需要重新导入。`tls internal` 适合本地/内网开发；正式公网部署应使用真实域名，让 Caddy 自动申请公网可信证书。
 
 如需在内网主机名下访问，可在 `.env` 中配置：
 
